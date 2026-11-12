@@ -3,77 +3,17 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() {
-      return request.auth != null;
-    }
-
-    function isAdmin() {
-      return signedIn()
-        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
-        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true
-        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role in ['super_admin', 'admin'];
-    }
-
-    function periodIsDraft(periodId) {
-      return getAfter(/databases/$(database)/documents/periods/$(periodId)).data.status == 'draft';
-    }
-
-    // Admin documents are provisioned only by the project owner through Firebase Console.
-    match /admins/{uid} {
-      allow get: if signedIn() && request.auth.uid == uid;
-      allow list, create, update, delete: if false;
-    }
-
-    // Only explicitly published aggregate summaries are public.
-    match /public_summaries/{summaryId} {
-      allow read: if true;
-      allow create, update: if isAdmin();
-      allow delete: if false;
-    }
-
-    match /members/{memberId} {
-      allow read: if isAdmin();
-      allow create, update: if isAdmin();
-      allow delete: if false;
-    }
-
-    // Current convenience view; history is kept in loan_snapshots.
-    match /loans/{loanId} {
-      allow read: if isAdmin();
-      allow create, update: if isAdmin();
-      allow delete: if false;
-    }
-
-    match /loan_snapshots/{snapshotId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && periodIsDraft(request.resource.data.periodId);
-      allow update, delete: if false;
-    }
-
-    match /periods/{periodId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && request.resource.data.status == 'draft';
-      allow update: if isAdmin()
-        && resource.data.status == 'draft'
-        && request.resource.data.status in ['draft', 'published']
-        && request.resource.data.periodId == resource.data.periodId;
-      allow delete: if false;
-    }
-
-    match /monthly_records/{recordId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && periodIsDraft(request.resource.data.periodId);
-      allow update, delete: if false;
-    }
-
-    match /audit_logs/{logId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin();
-      allow update, delete: if false;
-    }
-
+    // This rule allows anyone with your Firestore database reference to view, edit,
+    // and delete all data in your Firestore database. It is useful for getting
+    // started, but it is configured to expire after 30 days because it
+    // leaves your app open to attackers. At that time, all client
+    // requests to your Firestore database will be denied.
+    //
+    // Make sure to write security rules for your app before that time, or else
+    // all client requests to your Firestore database will be denied until you Update
+    // your rules
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if request.time < timestamp.date(2026, 12, 11);
     }
   }
 }
