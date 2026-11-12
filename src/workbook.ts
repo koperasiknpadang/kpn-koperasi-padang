@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import * as XlsxPopulateModule from "@xlsx/xlsx-populate";
 
 export type SourceName = "KOPERASI" | "MANDIRI" | "BRI";
 
@@ -53,23 +54,102 @@ function normalizeName(name: string): string {
 }
 
 function periodFromCell(value: unknown): string | null {
-  let date: Date | null = null;
-  if (value instanceof Date && !Number.isNaN(value.getTime())) date = value;
-  if (typeof value === "number") {
+  let year: number | null = null;
+  let month: number | null = null;
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    // Excel date cells are represented as local Date objects by SheetJS.
+    // Read the local calendar components so WIB does not shift 1 November to 31 October.
+    year = value.getFullYear();
+    month = value.getMonth() + 1;
+  } else if (typeof value === "number") {
     const parsed = XLSX.SSF.parse_date_code(value);
-    if (parsed) date = new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d));
+    if (parsed && parsed.y >= 2000 && parsed.m >= 1 && parsed.m <= 12) {
+      year = parsed.y;
+      month = parsed.m;
+    }
+  } else if (typeof value === "string") {
+    const raw = value.trim().toLowerCase();
+    const numeric = raw.match(/^(\d{1,4})[/-](\d{1,2})[/-](\d{1,4})$/);
+    if (numeric) {
+      const first = Number(numeric[1]);
+      const second = Number(numeric[2]);
+      const third = Number(numeric[3]);
+      // Format Indonesia dd/mm/yyyy dan format ISO yyyy/mm/dd.
+      year = numeric[1].length === 4 ? first : third;
+      month = numeric[1].length === 4 ? second : second;
+    } else {
+      const iso = raw.match(/^(\d{4})-(\d{1,2})(?:-\d{1,2})?/);
+      if (iso) {
+        year = Number(iso[1]);
+        month = Number(iso[2]);
+      } else {
+        const months: Record<string, number> = {
+          januari: 1, jan: 1, februari: 2, feb: 2, maret: 3, mar: 3,
+          april: 4, apr: 4, mei: 5, may: 5, juni: 6, jun: 6,
+          juli: 7, jul: 7, agustus: 8, agu: 8, agt: 8,
+          september: 9, sep: 9, oktober: 10, okt: 10, october: 10, oct: 10,
+          november: 11, nov: 11, desember: 12, des: 12, december: 12, dec: 12
+        };
+        const tokens = raw.split(/[^a-z]+/).filter(Boolean);
+        const monthEntry = Object.entries(months).find(([name]) => tokens.includes(name));
+        const y = raw.match(/(?:19|20)\d{2}/);
+        if (monthEntry && y) {
+          month = monthEntry[1];
+          year = Number(y[0]);
+        }
+      }
+    }
   }
-  if (typeof value === "string") {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) date = parsed;
-  }
-  if (!date) return null;
-  return date.getUTCFullYear() + "-" + String(date.getUTCMonth() + 1).padStart(2, "0");
+
+  if (!year || !month || year < 2000 || month < 1 || month > 12) return null;
+  return year + "-" + String(month).padStart(2, "0");
 }
 
-export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
+export async function parseWorkbook(file: File, password = ""): Promise<WorkbookPreview> {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+  const bytes = new Uint8Array(buffer);
+  const encryptedOfficeFile = file.name.toLowerCase().endsWith(".xlsx") &&
+    bytes.length >= 8 &&
+    bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0 &&
+    bytes[4] === 0xa1 && bytes[5] === 0xb1 && bytes[6] === 0x1a && bytes[7] === 0xe1;
+
+  let workbook: XLSX.WorkBook;
+  if (encryptedOfficeFile) {
+    if (!password) throw new Error("PASSWORD_REQUIRED");
+    try {
+      // Decrypt the password-protected XLSX locally in the browser. The original
+      // file is never uploaded and the password is never persisted.
+      type BrowserReader = {
+        fromData?: (data: ArrayBuffer, options: { password: string }) => Promise<{
+          output: (options: { type: "arraybuffer" }) => Promise<ArrayBuffer>;
+        }>;
+      };
+      // Depending on the CommonJS/ESM interop shape, Vite may expose the
+      // package API on either the namespace or its default export.
+      const moduleExports = XlsxPopulateModule as unknown as BrowserReader & {
+        default?: BrowserReader;
+      };
+      const browserReader = moduleExports.default ?? moduleExports;
+      if (typeof browserReader.fromData !== "function") {
+        throw new Error("ENCRYPTED_XLSX_UNSUPPORTED");
+      }
+      try {
+        const decrypted = await browserReader.fromData(buffer, { password });
+        const plainBuffer = await decrypted.output({ type: "arraybuffer" });
+        workbook = XLSX.read(plainBuffer, { type: "array", cellDates: true });
+      } catch {
+        throw new Error("PASSWORD_INVALID");
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === "ENCRYPTED_XLSX_UNSUPPORTED") {
+        throw error;
+      }
+      throw new Error("PASSWORD_INVALID");
+    }
+  } else {
+    workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+  }
   const sheets: Array<[string, SourceName]> = [
     ["Pot. Koperasi", "KOPERASI"],
     ["MANDIRI", "MANDIRI"],
@@ -87,7 +167,19 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
     }
 
     const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: true });
-    if (!periodId) periodId = periodFromCell(matrix[1]?.[0]) || null;
+    // Kolom P pada template menjadi parameter bunga per bulan. Nilai ini
+    // biasanya hanya diisi sekali (baris pertama), lalu dipakai formula baris lain.
+    const sheetInterestRate = matrix.slice(5)
+      .map(row => nullableNumber(row?.[15]))
+      .find(value => value !== null) ?? 0.01;
+    const sheetPeriod = periodFromCell(matrix[1]?.[0]);
+    if (!sheetPeriod) {
+      warnings.push("STOP: Tanggal periode pada sel A2 sheet " + sheetName + " tidak terbaca.");
+    } else if (!periodId) {
+      periodId = sheetPeriod;
+    } else if (periodId !== sheetPeriod) {
+      warnings.push("STOP: Periode pada sel A2 sheet " + sheetName + " berbeda dari sheet Pot. Koperasi.");
+    }
 
     // Workbook KPN: header pada baris 3-5, data dimulai pada baris 6. Pot. Koperasi adalah rekap konsolidasi; MANDIRI/BRI rincian pinjaman.
     for (let index = 5; index < matrix.length; index += 1) {
@@ -96,6 +188,9 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
       const name = typeof row[1] === "string" ? row[1].trim() : "";
       if (typeof serial !== "number" || !name) continue;
 
+      const originalLoanAmount = numberValue(row[11]);
+      const principalPaid = numberValue(row[5]);
+      const explicitTermMonths = nullableNumber(row[13]);
       const imported: ImportedRow = {
         rowNumber: index + 1,
         source,
@@ -104,16 +199,16 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
         savingsPrincipal: numberValue(row[2]),
         savingsMandatory: numberValue(row[3]),
         savingsVoluntary: numberValue(row[4]),
-        principalPaid: numberValue(row[5]),
+        principalPaid,
         interestPaid: numberValue(row[6]),
         installmentTotal: numberValue(row[7]),
         installmentNumber: nullableNumber(row[8]),
         totalDeduction: numberValue(row[9]),
         outstandingPrincipal: numberValue(row[10]),
-        originalLoanAmount: numberValue(row[11]),
+        originalLoanAmount,
         note: typeof row[12] === "string" ? row[12].trim() : "",
-        termMonths: nullableNumber(row[13]),
-        interestRate: nullableNumber(row[15]),
+        termMonths: explicitTermMonths,
+        interestRate: nullableNumber(row[15]) ?? (originalLoanAmount > 0 ? sheetInterestRate : null),
         nextCounter: nullableNumber(row[17]),
         nextMonthInstallmentNumber: nullableNumber(row[18])
       };
@@ -121,6 +216,9 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
 
       if (imported.originalLoanAmount > 0 && imported.installmentTotal === 0) {
         warnings.push("PERIKSA: Hasil formula angsuran nol pada " + sheetName + " baris " + (index + 1) + ".");
+      }
+      if (source !== "KOPERASI" && imported.originalLoanAmount > 0 && imported.termMonths === null) {
+        warnings.push("PERIKSA: Tenor pinjaman belum diisi pada " + sheetName + " baris " + (index + 1) + ". Tenor tidak akan ditebak dari jumlah pinjaman.");
       }
     }
   }
@@ -136,20 +234,17 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
   if (masterNames.size !== masterRows.length) {
     warnings.push("STOP: Ada nama anggota ganda pada sheet Pot. Koperasi setelah normalisasi. Periksa agar data anggota tidak tergabung.");
   }
-  if (masterNames.size !== lenderNames.size ||
-      [...masterNames].some(name => !lenderNames.has(name)) ||
-      [...lenderNames].some(name => !masterNames.has(name))) {
-    warnings.push("STOP: Daftar nama pada Pot. Koperasi tidak sama dengan gabungan MANDIRI dan BRI. Periksa daftar anggota sebelum impor.");
+  const unknownLenderNames = [...lenderNames].filter(name => !masterNames.has(name));
+  if (unknownLenderNames.length) {
+    warnings.push("STOP: Ada nama pada sheet MANDIRI/BRI yang tidak ditemukan di sheet Pot. Koperasi. Cocokkan nama anggota sebelum impor.");
   }
 
+  // Hanya komponen pinjaman yang direkonsiliasi terhadap gabungan dua bank.
+  // Simpanan dan total potongan tetap bersumber dari sheet utama Pot. Koperasi.
   const reconcileFields: Array<[keyof ImportedRow, string]> = [
-    ["savingsPrincipal", "simpanan pokok"],
-    ["savingsMandatory", "simpanan wajib"],
-    ["savingsVoluntary", "simpanan sukarela"],
     ["principalPaid", "angsuran pokok"],
-    ["interestPaid", "bunga"],
-    ["installmentTotal", "jumlah angsuran"],
-    ["totalDeduction", "total potongan"],
+    ["interestPaid", "bunga pinjaman"],
+    ["installmentTotal", "jumlah angsuran pinjaman"],
     ["outstandingPrincipal", "sisa pinjaman"],
     ["originalLoanAmount", "jumlah pinjaman"]
   ];
@@ -166,14 +261,14 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
   }
 
   if (!periodId) {
-    warnings.push("Tanggal periode pada sel A2 tidak terbaca. Gunakan format tanggal Excel yang valid.");
-    periodId = "2026-11";
+    warnings.push("STOP: Periode tidak dapat ditentukan. Perbaiki tanggal pada sel A2 di ketiga sheet.");
   }
   if (rows.length === 0) warnings.push("Tidak ada baris anggota yang terbaca. Pastikan nomor di kolom A dan nama di kolom B terisi.");
 
-  const date = new Date(periodId + "-01T00:00:00");
-  const periodLabel = new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric" }).format(date);
-  return { periodId, periodLabel, rows, warnings };
+  const periodLabel = periodId
+    ? new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(periodId + "-01T00:00:00Z"))
+    : "Periode tidak terbaca";
+  return { periodId: periodId || "", periodLabel, rows, warnings };
 }
 
 export function stableId(prefix: string, value: string): string {

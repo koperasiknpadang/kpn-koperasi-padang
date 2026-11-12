@@ -10,6 +10,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
 import { auth, db } from "./firebase";
+import * as XLSX from "xlsx";
 import { parseWorkbook, stableId, type ImportedRow, type WorkbookPreview } from "./workbook";
 
 type TabName = "overview" | "members" | "loans" | "periods" | "import";
@@ -89,7 +90,12 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [preview, setPreview] = useState<WorkbookPreview | null>(null);
   const [fileName, setFileName] = useState("");
+  const [selectedWorkbookFile, setSelectedWorkbookFile] = useState<File | null>(null);
+  const [workbookPassword, setWorkbookPassword] = useState("");
+  const [passwordRequired, setPasswordRequired] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
 
   async function loadPublicSummary() {
     try {
@@ -132,6 +138,11 @@ export default function App() {
       setDataBusy(false);
     }
   }
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -191,17 +202,36 @@ export default function App() {
     setMessage("");
   }
 
-  async function handleWorkbook(file?: File) {
+  async function handleWorkbook(file?: File, filePassword = "") {
     if (!file) return;
     setError("");
     setMessage("");
     setFileName(file.name);
+    setSelectedWorkbookFile(file);
     try {
-      const result = await parseWorkbook(file);
+      const result = await parseWorkbook(file, filePassword);
       setPreview(result);
+      setPasswordRequired(false);
+      setWorkbookPassword("");
+      setSelectedWorkbookFile(null);
     } catch (e: any) {
       setPreview(null);
-      setError(e?.message || "File Excel tidak dapat dibaca.");
+      if (e?.message === "PASSWORD_REQUIRED") {
+        setPasswordRequired(true);
+        setError("File Excel ini dilindungi password. Masukkan password untuk membacanya.");
+      } else if (e?.message === "PASSWORD_INVALID") {
+        setPasswordRequired(true);
+        setWorkbookPassword("");
+        setError("Password salah atau jenis enkripsi file belum didukung. Periksa password dan coba kembali.");
+      } else if (e?.message === "ENCRYPTED_XLSX_UNSUPPORTED") {
+        setPasswordRequired(false);
+        setWorkbookPassword("");
+        setError("Komponen pembaca Excel terenkripsi tidak tersedia pada versi aplikasi ini. File belum diimpor.");
+      } else {
+        setPasswordRequired(false);
+        setWorkbookPassword("");
+        setError(e?.message || "File Excel tidak dapat dibaca.");
+      }
     }
   }
 
@@ -221,6 +251,13 @@ export default function App() {
         throw new Error("Periode " + preview.periodId + " sudah ada. Impor dibatalkan agar data historis tidak tertimpa.");
       }
 
+      // Read existing member status once so a monthly workbook import never
+      // silently reactivates a member previously marked as inactive.
+      const existingMembersSnap = await getDocs(collection(db, "members"));
+      const existingMemberStatus = new Map(
+        existingMembersSnap.docs.map(item => [item.id, item.data().active])
+      );
+
       const memberDocs = new Map<string, AnyRecord>();
       const loanDocs = new Map<string, AnyRecord>();
       const loanSnapshotDocs = new Map<string, AnyRecord>();
@@ -239,7 +276,8 @@ export default function App() {
         memberDocs.set(memberId, {
           name: row.memberName,
           normalizedName: row.normalizedName,
-          active: true,
+          active: existingMemberStatus.get(memberId) === false ? false : true,
+          origin: "workbook_import",
           updatedAt: serverTimestamp()
         });
 
@@ -273,12 +311,7 @@ export default function App() {
       bankRows.forEach((row: ImportedRow) => {
         const memberId = stableId("member", row.normalizedName);
         if (!memberDocs.has(memberId)) {
-          memberDocs.set(memberId, {
-            name: row.memberName,
-            normalizedName: row.normalizedName,
-            active: true,
-            updatedAt: serverTimestamp()
-          });
+          throw new Error("Nama anggota " + row.memberName + " pada sheet " + row.source + " tidak ditemukan di sheet Pot. Koperasi.");
         }
         const hasLoan = row.originalLoanAmount > 0 || row.outstandingPrincipal > 0 ||
           row.principalPaid > 0 || row.interestPaid > 0;
@@ -350,6 +383,131 @@ export default function App() {
       setError(e?.message || "Impor gagal disimpan.");
     } finally {
       setImportBusy(false);
+    }
+  }
+
+  function exportCurrentData() {
+    const workbook = XLSX.utils.book_new();
+    const memberSheet = members.map((member, index) => ({
+      "No.": index + 1, "ID Anggota": member.id, "Nama Anggota": member.name,
+      "Status": member.active === false ? "Nonaktif" : "Aktif"
+    }));
+    const recordSheet = records.map((row, index) => ({
+      "No.": index + 1, "Periode": row.periodId || latestPeriod?.id || "",
+      "ID Anggota": row.memberId || "", "Nama Anggota": row.memberName || "",
+      "Simpanan Pokok": Number(row.savingsPrincipal || 0),
+      "Simpanan Wajib": Number(row.savingsMandatory || 0),
+      "Simpanan Sukarela": Number(row.savingsVoluntary || 0),
+      "Angsuran Pokok": Number(row.principalPaid || 0),
+      "Bunga": Number(row.interestPaid || 0),
+      "Tarif Bunga per Bulan": Number(row.interestRate ?? 0.01),
+      "Nomor Cicilan Periode Ini": row.installmentNumber ?? "",
+      "Nomor Cicilan Periode Berikutnya": row.nextMonthInstallmentNumber ?? "",
+      "Tenor (Bulan)": row.termMonths ?? "",
+      "Total Angsuran": Number(row.installmentTotal || 0),
+      "Total Potongan": Number(row.totalDeduction || 0),
+      "Sisa Pinjaman": Number(row.outstandingPrincipal || 0)
+    }));
+    const loanSheet = loans.map((loan, index) => ({
+      "No.": index + 1, "Periode": loan.lastPeriodId || latestPeriod?.id || "",
+      "ID Anggota": loan.memberId || "", "Nama Anggota": loan.memberName || "",
+      "Bank": loan.source || "", "Pokok Pinjaman": Number(loan.originalPrincipal || 0),
+      "Angsuran Pokok": Number(loan.installmentPrincipal || 0),
+      "Bunga": Number(loan.monthlyInterest || 0),
+      "Tarif Bunga per Bulan": Number(loan.interestRate ?? 0.01),
+      "Nomor Cicilan Periode Ini": loan.installmentNumber ?? "",
+      "Tenor (Bulan)": loan.termMonths ?? "",
+      "Sisa Pinjaman": Number(loan.outstandingPrincipal || 0), "Status": loan.status || ""
+    }));
+    const periodSheet = periods.map((period, index) => ({
+      "No.": index + 1, "ID Periode": period.id, "Nama Periode": period.periodLabel || "",
+      "Jumlah Baris Impor": Number(period.importedRows || 0),
+      "Jumlah Anggota": Number(period.memberCount || 0), "Status": period.status || "draft"
+    }));
+    const addSheet = (rows: AnyRecord[], name: string) => {
+      const sheet = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(workbook, sheet, name);
+    };
+    addSheet(memberSheet, "Anggota");
+    addSheet(recordSheet, "Rekap Keuangan");
+    addSheet(loanSheet, "Pinjaman Bank");
+    addSheet(periodSheet, "Daftar Periode");
+    const stamp = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Jakarta" }).format(new Date()).replace(/-/g, "");
+    XLSX.writeFile(workbook, "Laporan_KPN_" + (latestPeriod?.id || "semua-periode") + "_" + stamp + ".xlsx");
+    setMessage("File Excel berhasil disiapkan. Data keuangan berisi periode terbaru yang sedang ditampilkan; daftar periode dan anggota disertakan.");
+  }
+
+  function exportPreview() {
+    if (!preview) return;
+    const workbook = XLSX.utils.book_new();
+    const master = preview.rows.filter(row => row.source === "KOPERASI").map(row => ({
+      "No. Baris Excel": row.rowNumber, "Nama Anggota": row.memberName,
+      "Ke (Angsuran)": row.installmentNumber ?? "", "Simpanan Pokok": row.savingsPrincipal, "Simpanan Wajib": row.savingsMandatory,
+      "Simpanan Sukarela": row.savingsVoluntary, "Angsuran Pokok": row.principalPaid,
+      "Bunga": row.interestPaid, "Total Angsuran": row.installmentTotal,
+      "Total Potongan": row.totalDeduction, "Sisa Pinjaman": row.outstandingPrincipal
+    }));
+    const bankRows = (source: "MANDIRI" | "BRI") => preview.rows.filter(row => row.source === source).map(row => ({
+      "No. Baris Excel": row.rowNumber, "Nama Anggota": row.memberName,
+      "Ke (Angsuran)": row.installmentNumber ?? "", "Pokok Pinjaman": row.originalLoanAmount, "Angsuran Pokok": row.principalPaid,
+      "Bunga": row.interestPaid, "Total Angsuran": row.installmentTotal,
+      "Sisa Pinjaman": row.outstandingPrincipal, "Tenor (Bulan)": row.termMonths,
+      "Catatan": row.note
+    }));
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(master), "Pot. Koperasi");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(bankRows("MANDIRI")), "MANDIRI");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(bankRows("BRI")), "BRI");
+    XLSX.writeFile(workbook, "Pratinjau_Impor_KPN_" + preview.periodId + ".xlsx");
+  }
+
+  async function resetInitialData() {
+    if (!isAdmin || resetBusy) return;
+    const phrase = window.prompt("Reset hanya untuk menghapus data awal hasil impor yang masih dummy/tidak lengkap. Ketik RESET DATA AWAL untuk melanjutkan:");
+    if (phrase !== "RESET DATA AWAL") return;
+    setResetBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const periodSnap = await getDocs(collection(db, "periods"));
+      const published = periodSnap.docs.filter(item => item.data().status === "published");
+      if (published.length) {
+        throw new Error("Reset dibatalkan. Terdapat periode yang sudah dipublikasikan. Data terverifikasi tidak boleh dihapus melalui fitur reset awal.");
+      }
+      const collectionsToClear = ["monthly_records", "loan_snapshots", "loans", "members", "periods"];
+      let deletedCount = 0;
+      for (const collectionName of collectionsToClear) {
+        const snapshot = await getDocs(collection(db, collectionName));
+        for (let offset = 0; offset < snapshot.docs.length; offset += 400) {
+          const chunk = snapshot.docs.slice(offset, offset + 400);
+          const batch = writeBatch(db);
+          chunk.forEach(item => batch.delete(item.ref));
+          await batch.commit();
+          deletedCount += chunk.length;
+        }
+      }
+      await setDoc(doc(db, "public_summaries", "current"), {
+        periodId: null, periodLabel: "Belum ada data awal", memberCount: 0,
+        savingsTotal: 0, principalPaid: 0, interestPaid: 0, totalDeduction: 0,
+        outstandingTotal: 0, lenderBreakdown: [], resetAt: serverTimestamp()
+      });
+      await setDoc(doc(collection(db, "audit_logs")), {
+        action: "RESET_INITIAL_IMPORT_DATA", deletedDocuments: deletedCount,
+        actorUid: user?.uid || null, createdAt: serverTimestamp()
+      });
+      setPreview(null);
+      setFileName("");
+      setRecords([]);
+      setLoans([]);
+      setMembers([]);
+      setPeriods([]);
+      setMessage("Data awal hasil impor berhasil direset. Akun administrator dan pengaturan sistem tetap dipertahankan. Silakan unggah workbook yang sudah benar.");
+      setTab("import");
+      await refreshAdminData();
+      await loadPublicSummary();
+    } catch (e: any) {
+      setError(e?.message || "Reset data awal gagal. Periksa kembali hak akses dan aturan keamanan.");
+    } finally {
+      setResetBusy(false);
     }
   }
 
@@ -465,6 +623,7 @@ export default function App() {
               <p className="text-[11px] text-slate-500">Kejaksaan Negeri Padang</p>
             </div>
           </div>
+          <div className="flex shrink-0 rounded-xl border border-sage-100 bg-white px-2 py-1.5 text-right leading-tight sm:px-3 sm:py-2"><p className="hidden text-[10px] text-slate-400 sm:block">Waktu Padang (WIB)</p><p className="text-[11px] font-semibold tabular-nums text-sage-800 sm:text-xs">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(currentTime)}</p><p className="hidden text-[10px] text-slate-500 sm:block">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", weekday: "short", day: "2-digit", month: "short", year: "numeric" }).format(currentTime)}</p></div>
           {isAdmin ? (
             <div className="flex items-center gap-3">
               <span className="hidden rounded-full bg-sage-50 px-3 py-1.5 text-xs font-medium text-sage-700 sm:inline-flex"><ShieldCheck size={14} className="mr-1.5" /> Super Admin</span>
@@ -501,7 +660,10 @@ export default function App() {
                 <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">{tabs.find(item => item.id === tab)?.label}</h1>
                 <p className="mt-1 text-sm text-slate-500">Kelola data koperasi dan laporan bulanan.</p>
               </div>
-              <button onClick={() => void refreshAdminData()} className="inline-flex items-center gap-2 rounded-xl border border-sage-200 bg-white px-3 py-2 text-sm font-medium text-sage-800 hover:bg-sage-50"><RefreshCw size={15} className={dataBusy ? "animate-spin" : ""} /> Segarkan</button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={exportCurrentData} className="inline-flex items-center gap-2 rounded-xl border border-sage-200 bg-white px-3 py-2 text-sm font-medium text-sage-800 hover:bg-sage-50"><FileSpreadsheet size={15} /> Ekspor Excel</button>
+                <button onClick={() => void refreshAdminData()} className="inline-flex items-center gap-2 rounded-xl border border-sage-200 bg-white px-3 py-2 text-sm font-medium text-sage-800 hover:bg-sage-50"><RefreshCw size={15} className={dataBusy ? "animate-spin" : ""} /> Segarkan</button>
+              </div>
             </div>
 
             {error ? <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><AlertCircle size={17} className="mt-0.5 shrink-0" />{error}</div> : null}
@@ -579,20 +741,37 @@ export default function App() {
             {tab === "import" ? (
               <div className="space-y-4">
                 <Card>
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div><h2 className="font-semibold">Data awal koperasi</h2><p className="mt-1 text-xs text-slate-500">Impor hanya akan menambahkan periode baru dan tidak menimpa periode yang sudah tersimpan.</p></div>
+                    <span className="rounded-xl bg-sage-50 px-3 py-2 text-xs font-medium text-sage-700">Data historis dilindungi</span>
+                  </div>
                   <div className="flex items-start gap-3"><div className="rounded-xl bg-sage-50 p-3 text-sage-700"><UploadCloud size={22} /></div><div><h2 className="font-semibold">Impor workbook bulanan</h2><p className="mt-1 text-sm text-slate-500">Pilih file Excel dengan sheet Pot. Koperasi, MANDIRI, dan BRI. Data akan diperiksa terlebih dahulu sebelum disimpan.</p></div></div>
                   <label className="mt-5 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-sage-200 bg-sage-50/50 px-5 py-9 text-center hover:bg-sage-50">
                     <FileSpreadsheet size={28} className="text-sage-600" />
                     <span className="mt-3 text-sm font-semibold text-sage-800">Pilih file Excel (.xlsx)</span>
                     <span className="mt-1 text-xs text-slate-500">{fileName || "Belum ada file dipilih"}</span>
-                    <input type="file" accept=".xlsx,.xls" className="hidden" onChange={e => void handleWorkbook(e.target.files?.[0])} />
+                    <input type="file" accept=".xlsx,.xls" className="hidden" onChange={e => {
+                      const file = e.target.files?.[0];
+                      setWorkbookPassword("");
+                      setPasswordRequired(false);
+                      setSelectedWorkbookFile(file || null);
+                      void handleWorkbook(file);
+                    }} />
                   </label>
+                  {passwordRequired && selectedWorkbookFile ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+                    <label className="block text-xs font-semibold text-slate-700">Password file Excel
+                      <input type="password" autoComplete="off" value={workbookPassword} onChange={e => setWorkbookPassword(e.target.value)} placeholder="Masukkan password untuk membuka file" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-sage-500" />
+                    </label>
+                    <button type="button" disabled={!workbookPassword || importBusy} onClick={() => void handleWorkbook(selectedWorkbookFile, workbookPassword)} className="mt-3 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Baca file Excel</button>
+                    <p className="mt-2 text-[11px] text-slate-500">Password hanya dipakai sementara di perangkat ini dan tidak disimpan.</p>
+                  </div> : null}
                   <p className="mt-3 text-xs leading-relaxed text-slate-500">Sebelum mengunggah, buka file di Excel, tekan Ctrl+Alt+F9 untuk menghitung ulang formula, lalu simpan. Jangan mengunggah workbook ini ke GitHub.</p>
                 </Card>
                 {preview ? <Card>
                   <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-semibold">Pratinjau impor</h2><p className="mt-1 text-sm text-slate-500">{preview.periodLabel} · {number(preview.rows.length)} baris data terbaca</p></div><span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">Status: draft</span></div>
                   {preview.warnings.length ? <div className="mt-4 space-y-2">{preview.warnings.slice(0, 8).map((warning, index) => <p key={index} className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"><AlertCircle size={14} className="shrink-0" />{warning}</p>)}</div> : <p className="mt-4 flex items-center gap-2 text-xs text-emerald-700"><CheckCircle2 size={15} /> Struktur tiga sheet berhasil dibaca.</p>}
-                  <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[700px] text-left text-xs"><thead><tr className="border-b border-slate-100 text-slate-400"><th className="py-2">Nama anggota</th><th className="py-2">Sumber</th><th className="py-2 text-right">Simpanan wajib</th><th className="py-2 text-right">Angsuran pokok</th><th className="py-2 text-right">Bunga</th><th className="py-2 text-right">Sisa pinjaman</th></tr></thead><tbody>{preview.rows.slice(0, 8).map((row, index) => <tr key={index} className="border-b border-slate-50"><td className="py-2 font-medium">{row.memberName}</td><td className="py-2">{sourceLabel(row.source)}</td><td className="py-2 text-right">{money(row.savingsMandatory)}</td><td className="py-2 text-right">{money(row.principalPaid)}</td><td className="py-2 text-right">{money(row.interestPaid)}</td><td className="py-2 text-right">{money(row.outstandingPrincipal)}</td></tr>)}</tbody></table></div>
-                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><p className="max-w-xl text-xs text-slate-500">Simpan sebagai draft terlebih dahulu. Pastikan tidak ada periode dengan ID yang sama.</p><button disabled={importBusy || preview.rows.length === 0 || preview.warnings.some(warning => warning.startsWith("STOP:"))} onClick={() => void saveImport()} className="inline-flex items-center gap-2 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sage-600 disabled:cursor-not-allowed disabled:opacity-50">{importBusy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />} Simpan sebagai draft</button></div>
+                  <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[700px] text-left text-xs"><thead><tr className="border-b border-slate-100 text-slate-400"><th className="py-2">Nama anggota</th><th className="py-2">Sumber</th><th className="py-2 text-center">Ke</th><th className="py-2 text-right">Simpanan wajib</th><th className="py-2 text-right">Angsuran pokok</th><th className="py-2 text-right">Bunga</th><th className="py-2 text-right">Sisa pinjaman</th></tr></thead><tbody>{preview.rows.slice(0, 8).map((row, index) => <tr key={index} className="border-b border-slate-50"><td className="py-2 font-medium">{row.memberName}</td><td className="py-2">{sourceLabel(row.source)}</td><td className="py-2 text-center">{row.installmentNumber ?? "—"}</td><td className="py-2 text-right">{money(row.savingsMandatory)}</td><td className="py-2 text-right">{money(row.principalPaid)}</td><td className="py-2 text-right">{money(row.interestPaid)}</td><td className="py-2 text-right">{money(row.outstandingPrincipal)}</td></tr>)}</tbody></table></div>
+                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><p className="max-w-xl text-xs text-slate-500">Simpan sebagai draft terlebih dahulu. Pastikan tidak ada periode dengan ID yang sama.</p><div className="flex flex-wrap gap-2"><button onClick={exportPreview} className="inline-flex items-center gap-2 rounded-xl border border-sage-200 px-4 py-2.5 text-sm font-semibold text-sage-800 hover:bg-sage-50"><FileSpreadsheet size={15} /> Ekspor pratinjau</button><button disabled={importBusy || preview.rows.length === 0 || preview.warnings.some(warning => warning.startsWith("STOP:"))} onClick={() => void saveImport()} className="inline-flex items-center gap-2 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sage-600 disabled:cursor-not-allowed disabled:opacity-50">{importBusy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />} Simpan sebagai draft</button></div></div>
                 </Card> : null}
               </div>
             ) : null}
