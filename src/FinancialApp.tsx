@@ -397,7 +397,7 @@ export default function FinancialApp() {
         ]);
         if (!appSnap.exists() || appSnap.data().status !== "pending") throw new Error("Pengajuan sudah diproses atau tidak ditemukan.");
         if (!memberSnap.exists() || memberSnap.data().active === false) throw new Error("Anggota tidak aktif atau tidak ditemukan.");
-        if (periodSnap.exists() && periodSnap.data().status === "closed") throw new Error("Periode pencairan sudah ditutup.");
+        if (periodSnap.exists() && periodSnap.data().status !== "open") throw new Error("Periode pencairan sudah ditutup.");
         const app = appSnap.data();
         const principal = Number(app.amount);
         if (app.source === "KOPERASI" && principal > cashBalance) throw new Error("Saldo kas koperasi tidak mencukupi untuk pencairan ini. Saldo saat ini " + money(cashBalance) + ".");
@@ -469,7 +469,7 @@ export default function FinancialApp() {
           transaction.get(loanRef), transaction.get(periodRef), transaction.get(installmentRef)
         ]);
         if (!loanSnap.exists() || loanSnap.data().status !== "active") throw new Error("Pinjaman tidak aktif atau sudah lunas.");
-        if (periodSnap.exists() && periodSnap.data().status === "closed") throw new Error("Periode pembayaran sudah ditutup.");
+        if (periodSnap.exists() && periodSnap.data().status !== "open") throw new Error("Periode pembayaran sudah ditutup.");
         if (installmentSnap.exists()) throw new Error("Angsuran pinjaman ini untuk periode " + periodLabel(periodId) + " sudah dicatat. Sistem mencegah pembayaran ganda.");
         const currentLoan = loanSnap.data();
         const currentOutstanding = Number(currentLoan.outstandingPrincipal || 0);
@@ -530,7 +530,7 @@ export default function FinancialApp() {
     try {
       await runTransaction(db, async transaction => {
         const periodSnap = await transaction.get(periodRef);
-        if (periodSnap.exists() && periodSnap.data().status === "closed") throw new Error("Periode " + periodLabel(periodId) + " sudah ditutup.");
+        if (periodSnap.exists() && periodSnap.data().status !== "open") throw new Error("Periode " + periodLabel(periodId) + " tidak terbuka atau sudah ditutup.");
         if (!periodSnap.exists()) transaction.set(periodRef, newPeriodData(periodId, user));
         transaction.set(cashRef, {
           type: cashForm.type, category: cashForm.category.trim(), amount,
