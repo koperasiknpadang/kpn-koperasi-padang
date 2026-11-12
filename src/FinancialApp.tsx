@@ -353,6 +353,59 @@ export default function FinancialApp() {
     finally { setBusy(""); }
   }
 
+  async function reverseSavings(original: Row) {
+    if (original.reversalOf) return;
+    if (!window.confirm("Buat transaksi pembalikan untuk simpanan " + original.memberName + " sebesar " + money(original.amount) + "? Catatan asli tidak akan dihapus.")) return;
+    setBusy("reverse-savings"); setError(""); setMessage("");
+    const memberRef = doc(db, "members", original.memberId);
+    const periodId = periodOf(todayWib());
+    const periodRef = doc(db, "periods", periodId);
+    const reversalRef = doc(db, "savings_transactions", "reversal_" + original.id);
+    const cashRef = doc(collection(db, "cash_transactions"));
+    const journalRef = doc(collection(db, "journal_entries"));
+    const auditRef = doc(collection(db, "audit_logs"));
+    const direction: Direction = original.direction === "deposit" ? "withdrawal" : "deposit";
+    const amount = Number(original.amount || 0);
+    try {
+      await runTransaction(db, async transaction => {
+        const [memberSnap, periodSnap, reversalSnap] = await Promise.all([
+          transaction.get(memberRef), transaction.get(periodRef), transaction.get(reversalRef)
+        ]);
+        if (!memberSnap.exists()) throw new Error("Anggota tidak ditemukan.");
+        if (reversalSnap.exists()) throw new Error("Transaksi ini sudah pernah dibalik.");
+        if (periodSnap.exists() && periodSnap.data().status !== "open") throw new Error("Periode pembalikan tidak terbuka.");
+        const member = memberSnap.data();
+        const balances = { ...zeroBalances, ...(member.savingsBalances || {}) };
+        const previous = Number(balances[original.type as SavingType] || 0);
+        if (direction === "withdrawal" && amount > previous) throw new Error("Saldo saat ini tidak cukup untuk membalik setoran yang lama.");
+        balances[original.type as SavingType] = previous + (direction === "deposit" ? amount : -amount);
+        if (!periodSnap.exists()) transaction.set(periodRef, newPeriodData(periodId, user));
+        transaction.update(memberRef, { savingsBalances: balances, updatedAt: serverTimestamp() });
+        transaction.set(reversalRef, {
+          memberId: original.memberId, memberName: original.memberName, type: original.type,
+          direction, amount, date: todayWib(), periodId, reversalOf: original.id,
+          note: "Pembalikan transaksi simpanan " + original.id,
+          createdAt: serverTimestamp(), createdBy: user?.uid || null
+        });
+        transaction.set(cashRef, {
+          type: direction === "deposit" ? "income" : "expense",
+          category: "Pembalikan simpanan " + original.type, amount, date: todayWib(), periodId,
+          relatedType: "savings_reversal", relatedId: original.id,
+          note: "Pembalikan transaksi simpanan " + original.memberName,
+          createdAt: serverTimestamp(), createdBy: user?.uid || null
+        });
+        const lines = direction === "deposit"
+          ? [journalLine("1101", "Kas/Bank", amount, 0), journalLine("2101", "Simpanan Anggota", 0, amount)]
+          : [journalLine("2101", "Simpanan Anggota", amount, 0), journalLine("1101", "Kas/Bank", 0, amount)];
+        transaction.set(journalRef, journalData(periodId, todayWib(), "Pembalikan simpanan " + original.memberName, lines, user));
+        transaction.set(auditRef, auditData("REVERSE_SAVINGS_TRANSACTION", "savings_transactions", original.id, user));
+      });
+      setMessage("Transaksi simpanan dibalik melalui catatan baru. Riwayat asli tetap tersimpan.");
+      await refreshAll();
+    } catch (e: any) { setError(e?.message || "Pembalikan simpanan gagal."); }
+    finally { setBusy(""); }
+  }
+
   async function submitLoanApplication(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const amount = Number(applicationForm.amount);
@@ -514,6 +567,105 @@ export default function FinancialApp() {
       setMessage(isPayoff ? "Pelunasan dipercepat berhasil dicatat. Tidak ada angsuran berikutnya." : "Pembayaran angsuran berhasil dicatat dan sisa pinjaman diperbarui.");
       await refreshAll();
     } catch (e: any) { setError(e?.message || "Pembayaran angsuran gagal dicatat."); }
+    finally { setBusy(""); }
+  }
+
+  async function reverseInstallment(original: Row) {
+    if (original.kind === "reversal" || original.reversalOf) return;
+    if (!window.confirm("Batalkan pembayaran " + original.memberName + " sebesar " + money(original.totalPaid) + "? Sistem akan membuat transaksi pembalikan baru.")) return;
+    setBusy("reverse-installment"); setError(""); setMessage("");
+    const loanRef = doc(db, "loans", original.loanId);
+    const periodId = periodOf(todayWib());
+    const periodRef = doc(db, "periods", periodId);
+    const reversalRef = doc(db, "installments", "reversal_" + original.id);
+    const cashRef = doc(collection(db, "cash_transactions"));
+    const journalRef = doc(collection(db, "journal_entries"));
+    const auditRef = doc(collection(db, "audit_logs"));
+    const principal = Math.abs(Number(original.principalPaid || 0));
+    const interest = Math.abs(Number(original.interestPaid || 0));
+    const total = principal + interest;
+    try {
+      await runTransaction(db, async transaction => {
+        const [loanSnap, periodSnap, reversalSnap] = await Promise.all([
+          transaction.get(loanRef), transaction.get(periodRef), transaction.get(reversalRef)
+        ]);
+        if (!loanSnap.exists()) throw new Error("Pinjaman tidak ditemukan.");
+        if (reversalSnap.exists()) throw new Error("Pembayaran ini sudah pernah dibalik.");
+        if (periodSnap.exists() && periodSnap.data().status !== "open") throw new Error("Periode pembalikan tidak terbuka.");
+        const loan = loanSnap.data();
+        if (Number(loan.installmentNumber || 0) !== Number(original.installmentNumber || 0) ||
+            Number(loan.outstandingPrincipal || 0) !== Number(original.remainingPrincipal || 0)) {
+          throw new Error("Pembayaran ini bukan transaksi terakhir pinjaman. Pembalikan ditolak agar riwayat angsuran berikutnya tidak rusak.");
+        }
+        if (loan.source === "KOPERASI" && total > cashBalance) throw new Error("Saldo kas koperasi tidak cukup untuk mengembalikan pembayaran ini.");
+        const restoredBalance = Number(loan.outstandingPrincipal || 0) + principal;
+        const nextNumber = original.kind === "regular" ? Math.max(0, Number(loan.installmentNumber || 0) - 1) : Number(loan.installmentNumber || 0);
+        if (!periodSnap.exists()) transaction.set(periodRef, newPeriodData(periodId, user));
+        transaction.update(loanRef, {
+          outstandingPrincipal: restoredBalance, installmentNumber: nextNumber,
+          status: "active", lastPaymentDate: null, updatedAt: serverTimestamp()
+        });
+        transaction.set(reversalRef, {
+          loanId: original.loanId, memberId: original.memberId, memberName: original.memberName,
+          source: original.source, kind: "reversal", periodId, date: todayWib(),
+          installmentNumber: nextNumber, principalPaid: -principal, interestPaid: -interest,
+          totalPaid: -total, remainingPrincipal: restoredBalance, reversalOf: original.id,
+          note: "Pembalikan pembayaran " + original.id,
+          createdAt: serverTimestamp(), createdBy: user?.uid || null
+        });
+        if (loan.source === "KOPERASI") {
+          transaction.set(cashRef, {
+            type: "expense", category: "Pembalikan penerimaan angsuran", amount: total,
+            date: todayWib(), periodId, relatedType: "installment_reversal", relatedId: original.id,
+            note: "Pengembalian pembayaran " + original.memberName,
+            createdAt: serverTimestamp(), createdBy: user?.uid || null
+          });
+          const lines = [journalLine("1201", "Piutang Pinjaman", principal, 0)];
+          if (interest > 0) lines.push(journalLine("4101", "Pendapatan Bunga Pinjaman", interest, 0));
+          lines.push(journalLine("1101", "Kas/Bank", 0, total));
+          transaction.set(journalRef, journalData(periodId, todayWib(), "Pembalikan pembayaran pinjaman " + original.memberName, lines, user));
+        }
+        transaction.set(auditRef, auditData("REVERSE_INSTALLMENT", "installments", original.id, user));
+      });
+      setMessage("Pembayaran dibalik. Sisa pokok dan nomor angsuran dikembalikan ke posisi sebelum pembayaran.");
+      await refreshAll();
+    } catch (e: any) { setError(e?.message || "Pembalikan angsuran gagal."); }
+    finally { setBusy(""); }
+  }
+
+  async function reverseCashTransaction(original: Row) {
+    if (original.relatedType || original.reversalOf) return;
+    if (!window.confirm("Buat pembalikan kas untuk transaksi " + original.category + " sebesar " + money(original.amount) + "?")) return;
+    setBusy("reverse-cash"); setError(""); setMessage("");
+    const periodId = periodOf(todayWib());
+    const periodRef = doc(db, "periods", periodId);
+    const reversalRef = doc(db, "cash_transactions", "reversal_" + original.id);
+    const journalRef = doc(collection(db, "journal_entries"));
+    const auditRef = doc(collection(db, "audit_logs"));
+    const amount = Number(original.amount || 0);
+    const reversedType = original.type === "income" ? "expense" : "income";
+    try {
+      await runTransaction(db, async transaction => {
+        const [periodSnap, reversalSnap] = await Promise.all([transaction.get(periodRef), transaction.get(reversalRef)]);
+        if (reversalSnap.exists()) throw new Error("Transaksi kas ini sudah pernah dibalik.");
+        if (periodSnap.exists() && periodSnap.data().status !== "open") throw new Error("Periode pembalikan tidak terbuka.");
+        if (reversedType === "expense" && amount > cashBalance) throw new Error("Saldo kas tidak cukup untuk membalik penerimaan ini.");
+        if (!periodSnap.exists()) transaction.set(periodRef, newPeriodData(periodId, user));
+        transaction.set(reversalRef, {
+          type: reversedType, category: "Pembalikan: " + original.category, amount,
+          date: todayWib(), periodId, reversalOf: original.id,
+          note: "Pembalikan transaksi kas " + original.id,
+          createdAt: serverTimestamp(), createdBy: user?.uid || null
+        });
+        const lines = original.type === "income"
+          ? [journalLine("4201", "Pendapatan Lain-lain", amount, 0), journalLine("1101", "Kas/Bank", 0, amount)]
+          : [journalLine("1101", "Kas/Bank", amount, 0), journalLine("5101", "Beban Operasional", 0, amount)];
+        transaction.set(journalRef, journalData(periodId, todayWib(), "Pembalikan kas " + original.category, lines, user));
+        transaction.set(auditRef, auditData("REVERSE_CASH_TRANSACTION", "cash_transactions", original.id, user));
+      });
+      setMessage("Transaksi kas dibalik melalui jurnal koreksi. Catatan asli tetap tersimpan.");
+      await refreshAll();
+    } catch (e: any) { setError(e?.message || "Pembalikan kas gagal."); }
     finally { setBusy(""); }
   }
 
