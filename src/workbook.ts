@@ -120,15 +120,31 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
     try {
       // Decrypt the password-protected XLSX locally in the browser. The original
       // file is never uploaded and the password is never persisted.
-      const browserReader = XlsxPopulateModule as unknown as {
-        fromData: (data: ArrayBuffer, options: { password: string }) => Promise<{
+      type BrowserReader = {
+        fromData?: (data: ArrayBuffer, options: { password: string }) => Promise<{
           output: (options: { type: "arraybuffer" }) => Promise<ArrayBuffer>;
         }>;
       };
-      const decrypted = await browserReader.fromData(buffer, { password });
-      const plainBuffer = await decrypted.output({ type: "arraybuffer" });
-      workbook = XLSX.read(plainBuffer, { type: "array", cellDates: true });
-    } catch {
+      // Depending on the CommonJS/ESM interop shape, Vite may expose the
+      // package API on either the namespace or its default export.
+      const moduleExports = XlsxPopulateModule as unknown as BrowserReader & {
+        default?: BrowserReader;
+      };
+      const browserReader = moduleExports.default ?? moduleExports;
+      if (typeof browserReader.fromData !== "function") {
+        throw new Error("ENCRYPTED_XLSX_UNSUPPORTED");
+      }
+      try {
+        const decrypted = await browserReader.fromData(buffer, { password });
+        const plainBuffer = await decrypted.output({ type: "arraybuffer" });
+        workbook = XLSX.read(plainBuffer, { type: "array", cellDates: true });
+      } catch {
+        throw new Error("PASSWORD_INVALID");
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === "ENCRYPTED_XLSX_UNSUPPORTED") {
+        throw error;
+      }
       throw new Error("PASSWORD_INVALID");
     }
   } else {
