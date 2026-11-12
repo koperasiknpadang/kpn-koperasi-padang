@@ -218,6 +218,18 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
       };
       rows.push(imported);
 
+      const numericFields = [
+        imported.savingsPrincipal, imported.savingsMandatory, imported.savingsVoluntary,
+        imported.principalPaid, imported.interestPaid, imported.installmentTotal,
+        imported.totalDeduction, imported.outstandingPrincipal, imported.originalLoanAmount
+      ];
+      if (numericFields.some(value => value < 0)) {
+        warnings.push("STOP: Ada nominal negatif pada " + sheetName + " baris " + (index + 1) + ".");
+      }
+      if (imported.originalLoanAmount > 0 && imported.outstandingPrincipal > imported.originalLoanAmount) {
+        warnings.push("STOP: Sisa pinjaman melebihi pokok awal pada " + sheetName + " baris " + (index + 1) + ".");
+      }
+
       if (imported.originalLoanAmount > 0 && imported.installmentTotal === 0) {
         warnings.push("PERIKSA: Hasil formula angsuran nol pada " + sheetName + " baris " + (index + 1) + ".");
       }
