@@ -1437,7 +1437,7 @@ export default function FinancialApp() {
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Anggota utama</p><p className="mt-1 text-lg font-bold">{fmtNumber(preview.rows.filter(row=>row.source==="KOPERASI").length)}</p></div>
-              <div className="rounded-xl bg-sky-50 p-3"><p className="text-xs text-sky-800">Fasilitas bank</p><p className="mt-1 text-lg font-bold">{fmtNumber(preview.rows.filter(row=>row.bankSource!==null).length)}</p></div>
+              <div className="rounded-xl bg-sky-50 p-3"><p className="text-xs text-sky-800">Potongan melalui bank</p><p className="mt-1 text-lg font-bold">{fmtNumber(preview.rows.filter(row=>row.bankSource!==null).length)}</p></div>
               <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Simpanan wajib seluruh anggota</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.source==="KOPERASI").reduce((sum,row)=>sum+row.savingsMandatory,0))}</p></div>
               <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Total seluruh simpanan</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.source==="KOPERASI").reduce((sum,row)=>sum+row.savingsPrincipal+row.savingsMandatory+row.savingsVoluntary,0))}</p></div>
               <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-600">Total angsuran bank</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.source!=="KOPERASI").reduce((sum,row)=>sum+row.installmentTotal,0))}</p></div>
