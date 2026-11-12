@@ -16,7 +16,7 @@ import {
   Users, Wallet, X
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { parseWorkbook, stableId, type ImportedRow, type WorkbookPreview } from "./workbook";
+import { parseWorkbook, stableId, type WorkbookPreview } from "./workbook";
 import { auth, db } from "./firebase";
 
 type Row = Record<string, any>;
@@ -414,8 +414,8 @@ export default function FinancialApp() {
           createdAt: serverTimestamp(), createdBy: user?.uid || null
         });
         const lines = direction === "deposit"
-          ? [journalLine("1101", "Kas/Bank", amount, 0), journalLine("2101", "Simpanan Anggota", 0, amount)]
-          : [journalLine("2101", "Simpanan Anggota", amount, 0), journalLine("1101", "Kas/Bank", 0, amount)];
+          ? [journalLine("1101", "Kas/Bank", amount, 0), journalLine(savingsAccount(original.type as SavingType).code, savingsAccount(original.type as SavingType).name, 0, amount)]
+          : [journalLine(savingsAccount(original.type as SavingType).code, savingsAccount(original.type as SavingType).name, amount, 0), journalLine("1101", "Kas/Bank", 0, amount)];
         transaction.set(journalRef, journalData(periodId, todayWib(), "Pembalikan simpanan " + original.memberName, lines, user));
         transaction.set(auditRef, auditData("REVERSE_SAVINGS_TRANSACTION", "savings_transactions", original.id, user));
       });
@@ -1234,6 +1234,76 @@ export default function FinancialApp() {
           </Card>
           <Card><h2 className="mb-4 font-semibold">Buku kas</h2>
             {cashTransactions.length?<div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b border-slate-100 text-xs text-slate-400"><th className="py-3">Tanggal</th><th>Kategori</th><th>Keterangan</th><th>Periode</th><th className="text-right">Masuk</th><th className="text-right">Keluar</th><th>Aksi</th></tr></thead><tbody>{cashTransactions.map(t=><tr key={t.id} className="border-b border-slate-50"><td className="py-3">{dateLabel(t.date)}</td><td>{t.category}</td><td>{t.note||"—"}</td><td>{periodLabel(t.periodId)}</td><td className="text-right text-emerald-700">{t.type==="income"?money(t.amount):"—"}</td><td className="text-right text-rose-700">{t.type==="expense"?money(t.amount):"—"}</td><td>{t.reversalOf?"Pembalikan":t.relatedType?"—":cashTransactions.some(x=>x.reversalOf===t.id)?"Sudah dibalik":<button className="text-xs font-semibold text-rose-700 hover:underline" disabled={busy==="reverse-cash"} onClick={()=>void reverseCashTransaction(t)}>Batalkan</button>}</td></tr>)}</tbody></table></div>:<Empty title="Buku kas masih kosong" detail="Catat transaksi kas atau lakukan transaksi simpanan/pinjaman."/>}
+          </Card>
+        </div> : null}
+
+        {tab === "import" ? <div className="space-y-4">
+          <Card>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div><h2 className="font-semibold">Impor workbook bulanan</h2>
+                <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-500">Baca file Excel dengan tiga sheet wajib: Pot. Koperasi, MANDIRI, dan BRI. Data diperiksa dan ditampilkan lebih dahulu. File diproses di browser; file Excel dan password tidak diunggah ke Firebase.</p>
+              </div><FileSpreadsheet size={22} className="text-emerald-700"/>
+            </div>
+            <label className="mt-5 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-emerald-200 bg-emerald-50/40 px-5 py-8 text-center hover:bg-emerald-50">
+              <FileSpreadsheet size={28} className="text-emerald-700"/>
+              <span className="mt-3 text-sm font-semibold text-emerald-900">Pilih file Excel (.xlsx / .xls)</span>
+              <span className="mt-1 text-xs text-slate-500">{fileName || "Belum ada file dipilih"}</span>
+              <input type="file" accept=".xlsx,.xls" className="hidden" onChange={event => {
+                const file = event.target.files?.[0];
+                setPreview(null); setWorkbookPassword(""); setPasswordRequired(false);
+                if (file) void handleWorkbook(file);
+                event.currentTarget.value = "";
+              }}/>
+            </label>
+            {passwordRequired && selectedWorkbookFile ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <Field label="Password file Excel">
+                <input className={inputClass} type="password" autoComplete="off" value={workbookPassword} onChange={event=>setWorkbookPassword(event.target.value)} placeholder="Masukkan password workbook"/>
+              </Field>
+              <button type="button" className={"mt-3 "+buttonPrimary} disabled={!workbookPassword || importBusy} onClick={()=>void handleWorkbook(selectedWorkbookFile,workbookPassword)}>Baca file Excel</button>
+              <p className="mt-2 text-[11px] text-slate-500">Password hanya digunakan sementara di perangkat ini dan tidak disimpan.</p>
+            </div> : null}
+            <div className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
+              <strong>Aturan impor:</strong> Pot. Koperasi menjadi sumber master anggota dan simpanan bulanan. MANDIRI/BRI menjadi rincian fasilitas pinjaman eksternal. Angsuran MANDIRI/BRI tidak dicampurkan ke kas koperasi. Periode yang sudah ada akan ditolak agar tidak terjadi impor ganda.
+            </div>
+          </Card>
+          {preview ? <Card>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div><h2 className="font-semibold">Pratinjau dan pemeriksaan data</h2>
+                <p className="mt-1 text-sm text-slate-500">{preview.periodLabel} · {fmtNumber(preview.rows.length)} baris terbaca · {fileName}</p>
+              </div><Status value="open"/>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Anggota utama</p><p className="mt-1 text-lg font-bold">{fmtNumber(preview.rows.filter(row=>row.source==="KOPERASI").length)}</p></div>
+              <div className="rounded-xl bg-sky-50 p-3"><p className="text-xs text-sky-800">Fasilitas bank</p><p className="mt-1 text-lg font-bold">{fmtNumber(preview.rows.filter(row=>row.source!=="KOPERASI"&&(row.originalLoanAmount>0||row.outstandingPrincipal>0)).length)}</p></div>
+              <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Total simpanan bulan ini</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.source==="KOPERASI").reduce((sum,row)=>sum+row.savingsPrincipal+row.savingsMandatory+row.savingsVoluntary,0))}</p></div>
+              <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-600">Total angsuran bank</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.source!=="KOPERASI").reduce((sum,row)=>sum+row.installmentTotal,0))}</p></div>
+            </div>
+            {preview.warnings.length ? <div className="mt-4 space-y-2">
+              {preview.warnings.map((warning,index)=><p key={index} className={"flex gap-2 rounded-lg px-3 py-2 text-xs leading-relaxed "+(warning.startsWith("STOP:")?"bg-rose-50 text-rose-800":"bg-amber-50 text-amber-900")}>
+                <AlertCircle size={14} className="mt-0.5 shrink-0"/>{warning}
+              </p>)}
+            </div> : <p className="mt-4 flex items-center gap-2 text-xs text-emerald-700"><CheckCircle2 size={15}/>Pemeriksaan struktur dan rekonsiliasi dasar berhasil.</p>}
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[780px] text-left text-xs">
+                <thead><tr className="border-b border-slate-100 text-slate-400"><th className="py-2">No.</th><th>Nama anggota</th><th>Sumber</th><th className="text-right">Simpanan pokok</th><th className="text-right">Simpanan wajib</th><th className="text-right">Simpanan sukarela</th><th className="text-right">Angsuran</th><th className="text-right">Sisa pinjaman</th></tr></thead>
+                <tbody>{preview.rows.slice(0,12).map((row,index)=><tr key={row.source+"-"+row.memberNo+"-"+index} className="border-b border-slate-50">
+                  <td className="py-2">{row.memberNo}</td><td className="font-medium">{row.memberName}</td><td>{row.source}</td>
+                  <td className="text-right">{money(row.savingsPrincipal)}</td><td className="text-right">{money(row.savingsMandatory)}</td><td className="text-right">{money(row.savingsVoluntary)}</td>
+                  <td className="text-right">{money(row.installmentTotal)}</td><td className="text-right">{money(row.outstandingPrincipal)}</td>
+                </tr>)}</tbody>
+              </table>
+              {preview.rows.length>12?<p className="mt-2 text-[11px] text-slate-400">Menampilkan 12 baris pertama dari {fmtNumber(preview.rows.length)} baris.</p>:null}
+            </div>
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-2xl text-xs leading-relaxed text-slate-500">Simpan akan membuat satu periode baru, memperbarui master anggota, menambah transaksi simpanan, memperbarui posisi pinjaman MANDIRI/BRI, dan mencatat angsuran yang terbaca. Proses disimpan dalam satu batch atomik; jika gagal, batch tidak diterapkan sebagian.</p>
+              <button className={buttonPrimary} disabled={importBusy||preview.rows.length===0||preview.warnings.some(warning=>warning.startsWith("STOP:"))} onClick={()=>void saveImport()}>
+                {importBusy?<Loader2 size={16} className="animate-spin"/>:<CheckCircle2 size={16}/>}
+                {importBusy?"Menyimpan...":"Simpan data periode ke Firebase"}
+              </button>
+            </div>
+          </Card> : null}
+          <Card><h2 className="font-semibold">Riwayat periode impor</h2>
+            {periods.filter(period=>period.importId).length?<div className="mt-3 overflow-x-auto"><table className="w-full min-w-[560px] text-left text-sm"><thead><tr className="border-b border-slate-100 text-xs text-slate-400"><th className="py-2">Periode</th><th>File sumber</th><th className="text-right">Anggota</th><th>Status</th></tr></thead><tbody>{periods.filter(period=>period.importId).map(period=><tr key={period.id} className="border-b border-slate-50"><td className="py-3 font-medium">{period.periodLabel||period.id}</td><td>{period.importSource||"Workbook"}</td><td className="text-right">{fmtNumber(period.memberCount)}</td><td><Status value={period.status}/></td></tr>)}</tbody></table></div>:<Empty title="Belum ada periode impor" detail="Riwayat impor workbook yang berhasil akan tampil di sini."/>}
           </Card>
         </div> : null}
 
