@@ -89,7 +89,7 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
     const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: true });
     if (!periodId) periodId = periodFromCell(matrix[1]?.[0]) || null;
 
-    // Workbook KPN: header pada baris 3-5, data dimulai pada baris 6.
+    // Workbook KPN: header pada baris 3-5, data dimulai pada baris 6. Pot. Koperasi adalah rekap konsolidasi; MANDIRI/BRI rincian pinjaman.
     for (let index = 5; index < matrix.length; index += 1) {
       const row = matrix[index] || [];
       const serial = row[0];
