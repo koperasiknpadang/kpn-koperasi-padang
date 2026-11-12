@@ -300,7 +300,9 @@ export default function App() {
         periodId: preview.periodId,
         periodLabel: preview.periodLabel,
         status: "draft",
-        importedRows: preview.rows.length,
+        importedRows: recordDocs.size,
+        sourceRows: preview.rows.length,
+        loanCount: loanDocs.size,
         memberCount: memberDocs.size,
         sourceSheets: ["Pot. Koperasi", "MANDIRI", "BRI"],
         createdAt: serverTimestamp(),
@@ -313,7 +315,9 @@ export default function App() {
       batch.set(auditRef, {
         action: "IMPORT_WORKBOOK",
         periodId: preview.periodId,
-        importedRows: preview.rows.length,
+        importedRows: recordDocs.size,
+        sourceRows: preview.rows.length,
+        loanCount: loanDocs.size,
         actorUid: user?.uid || null,
         createdAt: serverTimestamp()
       });
