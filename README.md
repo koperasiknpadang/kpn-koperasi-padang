@@ -19,7 +19,7 @@ Bunga bawaan adalah 1% per bulan dari pokok awal (flat). Pokok angsuran dibagi m
 Pinjaman bersumber KOPERASI memengaruhi kas dan jurnal koperasi. Pinjaman MANDIRI/BRI dicatat sebagai fasilitas pinjaman eksternal anggota dan tidak dicampurkan ke arus kas KPN.
 
 ## Prinsip pencatatan
-- Setiap transaksi keuangan disimpan sebagai catatan baru (append-only), dilengkapi periode, tanggal, pembuat, dan audit log.
+- Setiap transaksi keuangan disimpan sebagai catatan baru (append-only), dilengkapi periode, tanggal, pembuat, dan audit log. Pembalikan simpanan, angsuran terakhir, dan kas umum dicatat sebagai transaksi koreksi baru tanpa menghapus catatan asli.
 - Saldo simpanan diperbarui atomik bersama transaksi simpanan.
 - Angsuran memakai ID deterministik per pinjaman/periode agar pembayaran ganda ditolak.
 - Anggota tidak dihapus permanen; anggota keluar dinonaktifkan agar riwayat tetap tersedia.
@@ -63,4 +63,4 @@ File `firestore.rules` mencakup koleksi operasional baru dan penguncian periode.
 Koleksi `monthly_records` dan `loan_snapshots` dipertahankan sebagai koleksi legacy untuk migrasi terkontrol, bukan sumber data operasional aplikasi baru.
 
 ## Batasan rilis awal
-Versi operasional ini menyediakan pencatatan transaksi inti, jurnal dasar, laporan, dan penguncian periode. Fitur yang masih memerlukan pengembangan/pengujian lanjutan sebelum dipakai sebagai pembukuan resmi meliputi pembatalan/reversal transaksi melalui UI, rekonsiliasi bank, bagan akun yang dapat dikonfigurasi, laporan neraca/SHU sesuai kebijakan koperasi, pemisahan kas dan rekening bank, persetujuan multi-level, backup/pemulihan otomatis, dan migrasi workbook historis. Pengujian transaksi nyata harus dilakukan dengan data uji terlebih dahulu.
+Versi operasional ini menyediakan pencatatan transaksi inti, jurnal dasar, laporan, dan penguncian periode. Fitur yang masih memerlukan pengembangan/pengujian lanjutan sebelum dipakai sebagai pembukuan resmi meliputi pembatalan pencairan pinjaman, rekonsiliasi bank, bagan akun yang dapat dikonfigurasi, laporan neraca/SHU final sesuai kebijakan koperasi, pemisahan kas dan rekening bank, persetujuan multi-level, backup/pemulihan otomatis, dan migrasi workbook historis. Pengujian transaksi nyata harus dilakukan dengan data uji terlebih dahulu.
