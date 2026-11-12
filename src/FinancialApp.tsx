@@ -16,10 +16,11 @@ import {
   Users, Wallet, X
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { parseWorkbook, stableId, type ImportedRow, type WorkbookPreview } from "./workbook";
 import { auth, db } from "./firebase";
 
 type Row = Record<string, any>;
-type Tab = "dashboard" | "members" | "savings" | "loans" | "installments" | "cash" | "reports" | "periods";
+type Tab = "dashboard" | "members" | "savings" | "loans" | "installments" | "cash" | "import" | "reports" | "periods";
 type SavingType = "principal" | "mandatory" | "voluntary";
 type Direction = "deposit" | "withdrawal";
 
@@ -104,6 +105,18 @@ function journalData(periodId: string, date: string, memo: string, lines: Row[],
 function journalLine(accountCode: string, accountName: string, debit: number, credit: number) {
   return { accountCode, accountName, debit, credit };
 }
+function savingsAccount(type: SavingType) {
+  const accounts: Record<SavingType, { code: string; name: string }> = {
+    principal: { code: "2101", name: "Simpanan Pokok Anggota" },
+    mandatory: { code: "2102", name: "Simpanan Wajib Anggota" },
+    voluntary: { code: "2103", name: "Simpanan Sukarela Anggota" }
+  };
+  return accounts[type];
+}
+function normalizeMemberName(value: string) {
+  return value.toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/[^a-z0-9 ]/g, " ").replace(/\\s+/g, " ").trim();
+}
 function newPeriodData(id: string, user: User | null) {
   return {
     periodId: id, periodLabel: periodLabel(id), status: "open",
@@ -162,6 +175,12 @@ export default function FinancialApp() {
     type: "expense", category: "Operasional", amount: "", date: todayWib(), note: ""
   });
   const [reportPeriod, setReportPeriod] = useState("all");
+  const [preview, setPreview] = useState<WorkbookPreview | null>(null);
+  const [fileName, setFileName] = useState("");
+  const [selectedWorkbookFile, setSelectedWorkbookFile] = useState<File | null>(null);
+  const [workbookPassword, setWorkbookPassword] = useState("");
+  const [passwordRequired, setPasswordRequired] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
 
   async function loadPublicSummary() {
     try {
@@ -341,8 +360,8 @@ export default function FinancialApp() {
           note: savingForm.note.trim(), createdAt: serverTimestamp(), createdBy: user?.uid || null
         });
         const lines = savingForm.direction === "deposit"
-          ? [journalLine("1101", "Kas/Bank", amount, 0), journalLine("2101", "Simpanan Anggota", 0, amount)]
-          : [journalLine("2101", "Simpanan Anggota", amount, 0), journalLine("1101", "Kas/Bank", 0, amount)];
+          ? [journalLine("1101", "Kas/Bank", amount, 0), journalLine(savingsAccount(savingForm.type).code, savingsAccount(savingForm.type).name, 0, amount)]
+          : [journalLine(savingsAccount(savingForm.type).code, savingsAccount(savingForm.type).name, amount, 0), journalLine("1101", "Kas/Bank", 0, amount)];
         transaction.set(journalRef, journalData(periodId, savingForm.date, "Transaksi simpanan " + member.name, lines, user));
         transaction.set(auditRef, auditData("SAVINGS_" + savingForm.direction.toUpperCase(), "savings_transactions", savingRef.id, user));
       });
@@ -404,6 +423,210 @@ export default function FinancialApp() {
       await refreshAll();
     } catch (e: any) { setError(e?.message || "Pembalikan simpanan gagal."); }
     finally { setBusy(""); }
+  }
+
+  async function handleWorkbook(file?: File, filePassword = "") {
+    if (!file) return;
+    setError(""); setMessage(""); setFileName(file.name); setSelectedWorkbookFile(file);
+    try {
+      const result = await parseWorkbook(file, filePassword);
+      setPreview(result); setPasswordRequired(false); setWorkbookPassword("");
+      setSelectedWorkbookFile(null);
+      setMessage("Workbook berhasil dibaca di perangkat ini. Belum ada data yang dikirim ke Firebase.");
+    } catch (e: any) {
+      setPreview(null);
+      if (e?.message === "PASSWORD_REQUIRED") {
+        setPasswordRequired(true);
+        setError("File Excel dilindungi password. Masukkan password untuk membacanya.");
+      } else if (e?.message === "PASSWORD_INVALID") {
+        setPasswordRequired(true); setWorkbookPassword("");
+        setError("Password salah atau format enkripsi file belum didukung.");
+      } else if (e?.message === "ENCRYPTED_XLSX_UNSUPPORTED") {
+        setPasswordRequired(false); setWorkbookPassword("");
+        setError("Pembaca Excel terenkripsi tidak tersedia pada versi ini. File belum diimpor.");
+      } else {
+        setPasswordRequired(false); setWorkbookPassword("");
+        setError(e?.message || "File Excel tidak dapat dibaca.");
+      }
+    }
+  }
+
+  async function saveImport() {
+    if (!preview || !isAdmin || preview.rows.length === 0) return;
+    if (preview.warnings.some(warning => warning.startsWith("STOP:"))) {
+      setError("Impor dihentikan karena ada pemeriksaan wajib yang belum lolos. Perbaiki workbook terlebih dahulu.");
+      return;
+    }
+    const masterRows = preview.rows.filter(row => row.source === "KOPERASI");
+    const bankRows = preview.rows.filter(row => row.source === "MANDIRI" || row.source === "BRI");
+    if (!masterRows.length) return setError("Sheet Pot. Koperasi tidak menghasilkan anggota.");
+    const importFingerprint = preview.periodId + "|" + preview.rows.map(row =>
+      [row.source, row.memberNo, row.normalizedName, row.savingsPrincipal, row.savingsMandatory,
+        row.savingsVoluntary, row.principalPaid, row.interestPaid, row.outstandingPrincipal,
+        row.originalLoanAmount, row.installmentNumber].join(":")
+    ).join("|");
+    const importId = stableId("workbook", importFingerprint);
+    setImportBusy(true); setError(""); setMessage("");
+    try {
+      const periodRef = doc(db, "periods", preview.periodId);
+      const existingPeriod = await getDoc(periodRef);
+      if (existingPeriod.exists()) {
+        throw new Error("Periode " + preview.periodLabel + " sudah tercatat. Impor tidak dijalankan agar data tidak ganda atau tertimpa.");
+      }
+
+      const memberById = new Map(members.map(item => [item.id, item]));
+      const memberNameIndex = new Map(members.map(item => [normalizeMemberName(String(item.name || "")), item]));
+      const batch = writeBatch(db);
+      const periodDate = preview.periodId + "-01";
+      let operationCount = 1; // period
+      const savingsLines: Row[] = [];
+      let totalSavings = 0;
+      let totalLoanRows = 0;
+      let importedInstallments = 0;
+
+      batch.set(periodRef, {
+        periodId: preview.periodId, periodLabel: preview.periodLabel, status: "open",
+        importedRows: masterRows.length, sourceRows: preview.rows.length,
+        memberCount: masterRows.length, loanCount: bankRows.filter(row =>
+          row.originalLoanAmount > 0 || row.outstandingPrincipal > 0 || row.principalPaid > 0 || row.interestPaid > 0
+        ).length,
+        sourceSheets: ["Pot. Koperasi", "MANDIRI", "BRI"],
+        importId, importSource: fileName, importedAt: serverTimestamp(),
+        createdAt: serverTimestamp(), createdBy: user?.uid || null
+      });
+
+      for (const row of masterRows) {
+        const memberId = memberIdFromNumber(row.memberNo);
+        if (memberId === "anggota_") throw new Error("Nomor anggota/urutan Excel kosong pada baris " + row.rowNumber + ".");
+        const existing = memberById.get(memberId);
+        const sameName = memberNameIndex.get(row.normalizedName);
+        if (existing && normalizeMemberName(String(existing.name || "")) !== row.normalizedName) {
+          throw new Error("Nomor anggota " + row.memberNo + " sudah dipakai oleh " + existing.name + ", sedangkan workbook berisi " + row.memberName + ".");
+        }
+        if (sameName && sameName.id !== memberId) {
+          throw new Error("Nama " + row.memberName + " sudah terdaftar dengan nomor anggota berbeda. Cocokkan data anggota terlebih dahulu.");
+        }
+        const balances = { ...zeroBalances, ...(existing?.savingsBalances || {}) };
+        const savingAmounts: Array<[SavingType, number]> = [
+          ["principal", Number(row.savingsPrincipal || 0)],
+          ["mandatory", Number(row.savingsMandatory || 0)],
+          ["voluntary", Number(row.savingsVoluntary || 0)]
+        ];
+        for (const [type, amount] of savingAmounts) {
+          if (amount < 0) throw new Error("Nominal simpanan negatif pada " + row.memberName + ".");
+          if (amount > 0) {
+            balances[type] = Number(balances[type] || 0) + amount;
+            totalSavings += amount;
+            const account = savingsAccount(type);
+            savingsLines.push(journalLine(account.code, account.name, 0, amount));
+            const savingId = stableId("saving", preview.periodId + "_" + memberId + "_" + type);
+            batch.set(doc(db, "savings_transactions", savingId), {
+              memberId, memberName: row.memberName, type, direction: "deposit", amount,
+              date: periodDate, periodId, importId,
+              note: "Potongan simpanan bulanan dari workbook " + fileName,
+              createdAt: serverTimestamp(), createdBy: user?.uid || null
+            });
+            operationCount += 1;
+          }
+        }
+        batch.set(doc(db, "members", memberId), {
+          memberNo: row.memberNo, name: row.memberName, normalizedName: row.normalizedName,
+          phone: existing?.phone || "", joinDate: existing?.joinDate || periodDate,
+          active: existing?.active !== false, savingsBalances: balances,
+          createdAt: existing?.createdAt || serverTimestamp(), updatedAt: serverTimestamp(),
+          origin: "workbook_import"
+        }, { merge: true });
+        operationCount += 1;
+      }
+
+      for (const row of bankRows) {
+        const memberId = memberIdFromNumber(row.memberNo);
+        const member = memberById.get(memberId) || members.find(item =>
+          normalizeMemberName(String(item.name || "")) === row.normalizedName
+        );
+        if (!member && !masterRows.some(item => item.memberNo === row.memberNo)) {
+          throw new Error("Anggota " + row.memberName + " pada sheet " + row.source + " tidak ditemukan di Pot. Koperasi.");
+        }
+        const hasLoan = row.originalLoanAmount > 0 || row.outstandingPrincipal > 0 ||
+          row.principalPaid > 0 || row.interestPaid > 0;
+        if (!hasLoan) continue;
+        const resolvedMemberId = member?.id || memberId;
+        const loanId = stableId("loan_" + row.source.toLowerCase(), row.normalizedName);
+        const existingLoan = loans.find(item => item.id === loanId);
+        const monthlyPrincipal = row.principalPaid > 0
+          ? row.principalPaid
+          : (row.termMonths && row.outstandingPrincipal > 0 ? Math.ceil(row.originalLoanAmount / row.termMonths) : 0);
+        const monthlyInterest = row.interestPaid > 0
+          ? row.interestPaid
+          : (row.interestRate !== null && row.outstandingPrincipal > 0 ? Math.round(row.originalLoanAmount * row.interestRate) : 0);
+        batch.set(doc(db, "loans", loanId), {
+          applicationId: null, memberId: resolvedMemberId, memberName: row.memberName,
+          source: row.source, principal: row.originalLoanAmount,
+          outstandingPrincipal: row.outstandingPrincipal, termMonths: row.termMonths,
+          interestRate: row.interestRate, monthlyPrincipal, monthlyInterest,
+          installmentNumber: row.installmentNumber ?? 0,
+          startDate: existingLoan?.startDate || null,
+          status: row.outstandingPrincipal > 0 ? "active" : "paid",
+          lastPaymentDate: row.installmentTotal > 0 ? periodDate : existingLoan?.lastPaymentDate || null,
+          importedFrom: "workbook", lastImportedPeriod: preview.periodId,
+          createdAt: existingLoan?.createdAt || serverTimestamp(), updatedAt: serverTimestamp()
+        }, { merge: true });
+        operationCount += 1;
+        totalLoanRows += 1;
+        if (row.installmentTotal > 0) {
+          const installmentId = stableId("installment", loanId + "_" + preview.periodId);
+          batch.set(doc(db, "installments", installmentId), {
+            loanId, memberId: resolvedMemberId, memberName: row.memberName, source: row.source,
+            kind: "regular", periodId: preview.periodId, date: periodDate,
+            installmentNumber: row.installmentNumber ?? 0,
+            principalPaid: row.principalPaid, interestPaid: row.interestPaid,
+            totalPaid: row.installmentTotal, remainingPrincipal: row.outstandingPrincipal,
+            importId, note: "Angsuran bulanan dari workbook " + fileName,
+            createdAt: serverTimestamp(), createdBy: user?.uid || null
+          });
+          operationCount += 1;
+          importedInstallments += 1;
+        }
+      }
+
+      if (totalSavings > 0) {
+        const cashId = stableId("cash", "workbook_savings_" + preview.periodId);
+        batch.set(doc(db, "cash_transactions", cashId), {
+          type: "income", category: "Setoran simpanan hasil potongan gaji",
+          amount: totalSavings, date: periodDate, periodId, importId,
+          relatedType: "workbook_import", relatedId: importId,
+          note: "Akumulasi simpanan anggota dari workbook " + fileName,
+          createdAt: serverTimestamp(), createdBy: user?.uid || null
+        });
+        const journalId = stableId("journal", "workbook_savings_" + preview.periodId);
+        const lines = [journalLine("1101", "Kas/Bank", totalSavings, 0), ...savingsLines];
+        batch.set(doc(db, "journal_entries", journalId), journalData(
+          preview.periodId, periodDate, "Impor simpanan anggota " + preview.periodLabel, lines, user
+        ));
+        operationCount += 2;
+      }
+      const auditRef = doc(collection(db, "audit_logs"));
+      batch.set(auditRef, {
+        ...auditData("IMPORT_MONTHLY_WORKBOOK", "periods", preview.periodId, user),
+        importId, sourceFile: fileName, importedRows: masterRows.length,
+        loanCount: totalLoanRows, installmentCount: importedInstallments,
+        savingsTotal: totalSavings
+      });
+      operationCount += 1;
+
+      if (operationCount > 500) {
+        throw new Error("Workbook menghasilkan " + operationCount + " operasi, melebihi batas aman satu transaksi Firestore (500). Tidak ada data yang disimpan. Bagi workbook menjadi beberapa kelompok anggota atau hubungi pengelola aplikasi untuk proses impor bertahap.");
+      }
+      await batch.commit();
+      setMessage("Impor " + preview.periodLabel + " berhasil. " + masterRows.length + " anggota, " +
+        totalLoanRows + " pinjaman bank, " + importedInstallments + " angsuran, dan " +
+        money(totalSavings) + " simpanan telah dicatat. Pinjaman MANDIRI/BRI tidak dimasukkan ke kas KPN.");
+      setPreview(null); setFileName(""); setSelectedWorkbookFile(null); setWorkbookPassword("");
+      await refreshAll();
+      setTab("dashboard");
+    } catch (e: any) {
+      setError(e?.message || "Impor workbook gagal. Tidak ada data yang disimpan jika batch Firestore belum berhasil dikomit.");
+    } finally { setImportBusy(false); }
   }
 
   async function submitLoanApplication(event: FormEvent<HTMLFormElement>) {
@@ -724,7 +947,7 @@ export default function FinancialApp() {
     const summary = {
       memberCount: members.filter(member => member.active !== false).length,
       savingsTotal: totalSavingsNow, outstandingTotal: outstandingNow,
-      cashBalance, interestIncome: installments.reduce((sum, item) => sum + Number(item.interestPaid || 0), 0),
+      cashBalance, interestIncome: installments.filter(item => item.source === "KOPERASI").reduce((sum, item) => sum + Number(item.interestPaid || 0), 0),
       updatedAt: serverTimestamp()
     };
     setBusy("publish"); setError(""); setMessage("");
@@ -815,6 +1038,7 @@ export default function FinancialApp() {
     { id: "loans", label: "Pinjaman", icon: Landmark },
     { id: "installments", label: "Angsuran", icon: Banknote },
     { id: "cash", label: "Kas", icon: CircleDollarSign },
+    { id: "import", label: "Impor Excel", icon: FileSpreadsheet },
     { id: "reports", label: "Laporan", icon: BarChart3 },
     { id: "periods", label: "Periode", icon: CalendarDays }
   ];
@@ -1018,7 +1242,7 @@ export default function FinancialApp() {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Stat label="Simpanan anggota" value={money(totalSavings)} note="Saldo saat ini" icon={Wallet}/>
             <Stat label="Sisa piutang pinjaman" value={money(outstandingLoans)} note="Pinjaman aktif" icon={Landmark} tone="blue"/>
-            <Stat label="Bunga pinjaman diterima" value={money(filteredInstallments.reduce((s,t)=>s+Number(t.interestPaid||0),0))} note="Periode terpilih" icon={TrendingUp}/>
+            <Stat label="Bunga pinjaman diterima" value={money(filteredInstallments.filter(t=>t.source==="KOPERASI").reduce((s,t)=>s+Number(t.interestPaid||0),0))} note="Periode terpilih" icon={TrendingUp}/>
             <Stat label="SHU sementara" value={money(netSurplus)} note="Pendapatan dikurangi beban" icon={BarChart3} tone="amber"/>
           </div>
           <Card><h2 className="mb-4 font-semibold">Neraca saldo / buku besar</h2>
