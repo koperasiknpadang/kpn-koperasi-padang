@@ -48,7 +48,7 @@ Ikuti langkah lengkap di [PANDUAN_DEPLOYMENT.md](./PANDUAN_DEPLOYMENT.md). Ringk
 2. Buat service account khusus deployment dengan izin minimum.
 3. Konfigurasikan Workload Identity Pool dan OIDC provider untuk repository ini.
 4. Tambahkan dua GitHub Actions repository variables: `GCP_WORKLOAD_IDENTITY_PROVIDER` dan `GCP_SERVICE_ACCOUNT`.
-5. Jalankan ulang workflow pada tab Actions.
+5. Setiap push ke branch `main` akan menjalankan build dan, jika kedua variable tersedia, deployment Firebase Hosting secara otomatis.
 
 Workflow saat ini hanya menerbitkan Firebase Hosting; workflow tidak menerbitkan Firestore Security Rules. Deploy belum dianggap berhasil sampai langkah Firebase Hosting benar-benar selesai dengan status sukses. Jangan mengunggah service-account JSON, private key, password, atau data anggota ke repository maupun GitHub.
 
