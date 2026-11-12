@@ -7,6 +7,7 @@ export interface ImportedRow {
   rowNumber: number;
   memberNo: string;
   source: SourceName;
+  bankSource: "MANDIRI" | "BRI" | null;
   memberName: string;
   normalizedName: string;
   savingsPrincipal: number;
@@ -173,13 +174,10 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
     const sheetInterestRate = matrix.slice(5)
       .map(row => nullableNumber(row?.[15]))
       .find(value => value !== null) ?? 0.01;
-    const sheetPeriod = periodFromCell(matrix[1]?.[0]);
-    if (!sheetPeriod) {
-      warnings.push("STOP: Tanggal periode pada sel A2 sheet " + sheetName + " tidak terbaca.");
-    } else if (!periodId) {
-      periodId = sheetPeriod;
-    } else if (periodId !== sheetPeriod) {
-      warnings.push("STOP: Periode pada sel A2 sheet " + sheetName + " berbeda dari sheet Pot. Koperasi.");
+    const sheetPeriod = source === "KOPERASI" ? periodFromCell(matrix[1]?.[0]) : null;
+    if (source === "KOPERASI") {
+      if (!sheetPeriod) warnings.push("STOP: Tanggal periode pada sel A2 sheet Pot. Koperasi tidak terbaca.");
+      else periodId = sheetPeriod;
     }
 
     // Workbook KPN: header pada baris 3-5, data dimulai pada baris 6. Pot. Koperasi adalah rekap konsolidasi; MANDIRI/BRI rincian pinjaman.
@@ -198,6 +196,7 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
         rowNumber: index + 1,
         memberNo,
         source,
+        bankSource: null,
         memberName: name,
         normalizedName: normalizeName(name),
         savingsPrincipal: numberValue(row[2]),
@@ -223,17 +222,17 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
         imported.principalPaid, imported.interestPaid, imported.installmentTotal,
         imported.totalDeduction, imported.outstandingPrincipal, imported.originalLoanAmount
       ];
-      if (numericFields.some(value => value < 0)) {
+      if (source === "KOPERASI" && numericFields.some(value => value < 0)) {
         warnings.push("STOP: Ada nominal negatif pada " + sheetName + " baris " + (index + 1) + ".");
       }
-      if (imported.originalLoanAmount > 0 && imported.outstandingPrincipal > imported.originalLoanAmount) {
+      if (source === "KOPERASI" && imported.originalLoanAmount > 0 && imported.outstandingPrincipal > imported.originalLoanAmount) {
         warnings.push("STOP: Sisa pinjaman melebihi pokok awal pada " + sheetName + " baris " + (index + 1) + ".");
       }
 
-      if (imported.originalLoanAmount > 0 && imported.installmentTotal === 0) {
+      if (source === "KOPERASI" && imported.originalLoanAmount > 0 && imported.installmentTotal === 0) {
         warnings.push("PERIKSA: Hasil formula angsuran nol pada " + sheetName + " baris " + (index + 1) + ".");
       }
-      if (imported.installmentTotal > 0 &&
+      if (source === "KOPERASI" && imported.installmentTotal > 0 &&
           Math.abs(imported.installmentTotal - imported.principalPaid - imported.interestPaid) > 1) {
         warnings.push("PERIKSA: Total angsuran tidak sama dengan pokok + bunga pada " + sheetName + " baris " + (index + 1) + ".");
       }
@@ -254,72 +253,56 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
   }
 
   const masterRows = rows.filter(row => row.source === "KOPERASI");
-  const lenderRows = rows.filter(row => row.source === "MANDIRI" || row.source === "BRI");
+  const bankRows = rows.filter(row => row.source === "MANDIRI" || row.source === "BRI");
   const masterNames = new Set(masterRows.map(row => row.normalizedName));
-  const lenderNames = new Set(lenderRows.map(row => row.normalizedName));
-
-  if (masterRows.length === 0) {
-    warnings.push("STOP: Sheet Pot. Koperasi tidak berisi baris anggota.");
-  }
-  if (masterNames.size !== masterRows.length) {
-    warnings.push("STOP: Ada nama anggota ganda pada sheet Pot. Koperasi setelah normalisasi. Periksa agar data anggota tidak tergabung.");
-  }
   const memberNumbers = new Set(masterRows.map(row => row.memberNo));
-  if (memberNumbers.size !== masterRows.length) {
-    warnings.push("STOP: Ada nomor anggota/urutan kolom A yang ganda pada sheet Pot. Koperasi.");
-  }
+  if (masterRows.length === 0) warnings.push("STOP: Sheet Pot. Koperasi tidak berisi baris anggota.");
+  if (masterNames.size !== masterRows.length) warnings.push("STOP: Ada nama anggota ganda pada sheet Pot. Koperasi setelah normalisasi.");
+  if (memberNumbers.size !== masterRows.length) warnings.push("STOP: Ada nomor anggota/urutan kolom A yang ganda pada sheet Pot. Koperasi.");
+
+  // Sheet bank hanya dipakai untuk memberi label sumber potongan. Nilai pinjaman,
+  // angsuran, bunga, tenor, dan saldo selalu dibaca dari Pot. Koperasi.
+  const bankByMember = new Map<string, "MANDIRI" | "BRI">();
   for (const source of ["MANDIRI", "BRI"] as const) {
-    const sourceRows = lenderRows.filter(row => row.source === source);
-    if (new Set(sourceRows.map(row => row.normalizedName)).size !== sourceRows.length) {
-      warnings.push("STOP: Ada nama anggota ganda pada sheet " + source + ". Satu anggota per bank hanya dapat dipetakan ke satu fasilitas pinjaman.");
-    }
-  }
-  const unknownLenderNames = [...lenderNames].filter(name => !masterNames.has(name));
-  if (unknownLenderNames.length) {
-    warnings.push("STOP: Ada nama pada sheet MANDIRI/BRI yang tidak ditemukan di sheet Pot. Koperasi. Cocokkan nama anggota sebelum impor.");
-  }
-
-  // Periksa apakah total potongan anggota sejalan dengan simpanan dan angsuran bank.
-  for (const master of masterRows) {
-    const bankTotal = lenderRows.filter(row => row.normalizedName === master.normalizedName)
-      .reduce((sum, row) => sum + Number(row.installmentTotal || 0), 0);
-    const expectedDeduction = master.savingsPrincipal + master.savingsMandatory +
-      master.savingsVoluntary + bankTotal;
-    if (Math.abs(master.totalDeduction - expectedDeduction) > 1) {
-      warnings.push("PERIKSA: Total potongan " + master.memberName + " pada Pot. Koperasi tidak sama dengan simpanan + angsuran bank. Periksa komponen potongan lain atau data sumber.");
+    const seen = new Set<string>();
+    for (const row of bankRows.filter(item => item.source === source)) {
+      if (seen.has(row.normalizedName)) {
+        warnings.push("STOP: Nama anggota ganda pada sheet " + source + ".");
+      }
+      seen.add(row.normalizedName);
+      if (!masterNames.has(row.normalizedName)) {
+        warnings.push("STOP: Nama pada sheet " + source + " tidak ditemukan di Pot. Koperasi: " + row.memberName + ".");
+      }
+      const previous = bankByMember.get(row.normalizedName);
+      if (previous && previous !== source) {
+        warnings.push("STOP: Anggota " + row.memberName + " tercantum pada MANDIRI dan BRI sekaligus. Periksa pemisahan potongan bank.");
+      } else {
+        bankByMember.set(row.normalizedName, source);
+      }
     }
   }
 
-  // Hanya komponen pinjaman yang direkonsiliasi terhadap gabungan dua bank.
-  // Simpanan dan total potongan tetap bersumber dari sheet utama Pot. Koperasi.
-  const reconcileFields: Array<[keyof ImportedRow, string]> = [
-    ["principalPaid", "angsuran pokok"],
-    ["interestPaid", "bunga pinjaman"],
-    ["installmentTotal", "jumlah angsuran pinjaman"],
-    ["outstandingPrincipal", "sisa pinjaman"],
-    ["originalLoanAmount", "jumlah pinjaman"]
-  ];
-  for (const [field, label] of reconcileFields) {
-    const masterTotal = masterRows.reduce((sum, row) => sum + Number(row[field] || 0), 0);
-    const lenderTotal = lenderRows.reduce((sum, row) => sum + Number(row[field] || 0), 0);
-    if (Math.abs(masterTotal - lenderTotal) > 1) {
-      warnings.push(
-        "STOP: Rekonsiliasi " + label + " berbeda antara Pot. Koperasi (" +
-        Math.round(masterTotal).toLocaleString("id-ID") + ") dan MANDIRI + BRI (" +
-        Math.round(lenderTotal).toLocaleString("id-ID") + ")."
-      );
+  for (const row of masterRows) {
+    row.bankSource = bankByMember.get(row.normalizedName) ?? null;
+    // Koreksi tenor Alextra sesuai konfirmasi pengelola; tidak mengubah workbook asli.
+    if (row.normalizedName === "alextra" && row.originalLoanAmount > 0) row.termMonths = 20;
+    if (row.bankSource && row.outstandingPrincipal > 0 && row.installmentNumber === null) {
+      warnings.push("STOP: Nomor angsuran belum diisi untuk pinjaman " + row.memberName + " pada Pot. Koperasi.");
+    }
+    if (row.bankSource && row.originalLoanAmount > 0 && row.termMonths === null) {
+      warnings.push("PERIKSA: Tenor pinjaman " + row.memberName + " belum diisi pada Pot. Koperasi. Tenor tidak akan ditebak.");
+    }
+    if (row.bankSource && row.outstandingPrincipal > 0 && row.originalLoanAmount <= 0) {
+      warnings.push("STOP: Sisa pinjaman ada tetapi pokok awal kosong untuk " + row.memberName + " pada Pot. Koperasi.");
     }
   }
 
-  if (!periodId) {
-    warnings.push("STOP: Periode tidak dapat ditentukan. Perbaiki tanggal pada sel A2 di ketiga sheet.");
-  }
-  if (rows.length === 0) warnings.push("Tidak ada baris anggota yang terbaca. Pastikan nomor di kolom A dan nama di kolom B terisi.");
-
-  const periodLabel = periodId
+  if (!periodId) warnings.push("STOP: Periode tidak dapat ditentukan dari sel A2 Pot. Koperasi.");
+  if (masterRows.length === 0) warnings.push("Tidak ada baris anggota yang terbaca pada Pot. Koperasi.");
+    const periodLabel = periodId
     ? new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(periodId + "-01T00:00:00Z"))
     : "Periode tidak terbaca";
-  return { periodId: periodId || "", periodLabel, rows, warnings };
+  return { periodId: periodId || "", periodLabel, rows: masterRows, warnings };
 }
 
 export function stableId(prefix: string, value: string): string {
