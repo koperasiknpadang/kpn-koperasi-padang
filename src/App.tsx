@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   AlertCircle, ArrowUpRight, Banknote, BarChart3, CalendarDays, CheckCircle2, Clock3,
-  FileSpreadsheet, Landmark, LayoutDashboard, Loader2, LockKeyhole, LogOut,
+  FileSpreadsheet, KeyRound, Landmark, LayoutDashboard, Loader2, LockKeyhole, LogOut,
   RefreshCw, Search, ShieldCheck, UploadCloud, Users, Wallet
 } from "lucide-react";
 import {
   collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc,
   updateDoc, where, writeBatch
 } from "firebase/firestore";
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
+import { EmailAuthProvider, onAuthStateChanged, reauthenticateWithCredential, signInWithEmailAndPassword, signOut, updatePassword, type User } from "firebase/auth";
 import { auth, db } from "./firebase";
 import * as XLSX from "xlsx";
 import { parseWorkbook, stableId, type ImportedRow, type WorkbookPreview } from "./workbook";
@@ -78,6 +78,11 @@ export default function App() {
   const [email, setEmail] = useState("koperasiknpadang@gmail.com");
   const [password, setPassword] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [currentAdminPassword, setCurrentAdminPassword] = useState("");
+  const [newAdminPassword, setNewAdminPassword] = useState("");
+  const [confirmAdminPassword, setConfirmAdminPassword] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState<TabName>("overview");
@@ -200,6 +205,47 @@ export default function App() {
     await signOut(auth);
     setTab("overview");
     setMessage("");
+  }
+
+  async function handleChangePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user || !user.email) {
+      setError("Sesi administrator tidak ditemukan. Silakan masuk kembali.");
+      return;
+    }
+    if (newAdminPassword.length < 8) {
+      setError("Password baru minimal 8 karakter.");
+      return;
+    }
+    if (newAdminPassword !== confirmAdminPassword) {
+      setError("Konfirmasi password baru tidak sama.");
+      return;
+    }
+    setPasswordBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const credential = EmailAuthProvider.credential(user.email, currentAdminPassword);
+      await reauthenticateWithCredential(user, credential);
+      await updatePassword(user, newAdminPassword);
+      setCurrentAdminPassword("");
+      setNewAdminPassword("");
+      setConfirmAdminPassword("");
+      setShowChangePassword(false);
+      setMessage("Password administrator berhasil diperbarui. Gunakan password baru pada login berikutnya.");
+    } catch (e: any) {
+      const code = e?.code || "";
+      const friendly = code === "auth/wrong-password" || code === "auth/invalid-credential"
+        ? "Password saat ini tidak sesuai."
+        : code === "auth/weak-password"
+          ? "Password baru terlalu lemah. Gunakan minimal 8 karakter."
+          : code === "auth/requires-recent-login"
+            ? "Sesi login sudah terlalu lama. Keluar, masuk kembali, lalu ulangi perubahan password."
+            : e?.message || "Password gagal diperbarui.";
+      setError(friendly);
+    } finally {
+      setPasswordBusy(false);
+    }
   }
 
   async function handleWorkbook(file?: File, filePassword = "") {
@@ -641,6 +687,7 @@ export default function App() {
           {isAdmin ? (
             <div className="flex items-center gap-3">
               <span className="hidden rounded-full bg-sage-50 px-3 py-1.5 text-xs font-medium text-sage-700 sm:inline-flex"><ShieldCheck size={14} className="mr-1.5" /> Super Admin</span>
+              <button onClick={() => { setError(""); setMessage(""); setShowChangePassword(true); }} className="inline-flex items-center gap-2 rounded-xl border border-sage-200 px-3 py-2 text-sm font-medium text-sage-800 transition hover:bg-sage-50"><KeyRound size={15} /><span className="hidden sm:inline">Ganti password</span><span className="sm:hidden">Password</span></button>
               <button onClick={handleLogout} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium hover:bg-slate-50"><LogOut size={15} /> Keluar</button>
             </div>
           ) : (
@@ -820,6 +867,30 @@ export default function App() {
           <footer className="mt-12 border-t border-sage-100 py-6 text-center text-xs text-slate-400">© {new Date().getFullYear()} KPN Koperasi Kejaksaan Negeri Padang</footer>
         </main>
       )}
+
+      {showChangePassword && isAdmin ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+        <div className="w-full max-w-md rounded-3xl border border-white/70 bg-white p-6 shadow-2xl sm:p-8">
+          <div className="mb-6 flex items-start justify-between gap-4">
+            <div>
+              <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-sage-700 text-white"><KeyRound size={20} /></div>
+              <h2 className="text-xl font-semibold">Ganti password administrator</h2>
+              <p className="mt-1 text-sm text-slate-500">Verifikasi password saat ini sebelum menetapkan password baru.</p>
+            </div>
+            <button type="button" onClick={() => { setShowChangePassword(false); setCurrentAdminPassword(""); setNewAdminPassword(""); setConfirmAdminPassword(""); setError(""); }} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100" aria-label="Tutup">✕</button>
+          </div>
+          {error ? <div className="mb-4 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div> : null}
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            <label className="block"><span className="mb-1.5 block text-xs font-semibold text-slate-600">Password saat ini</span><input type="password" autoComplete="current-password" required value={currentAdminPassword} onChange={e => setCurrentAdminPassword(e.target.value)} className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-sage-500 focus:ring-2 focus:ring-sage-100" /></label>
+            <label className="block"><span className="mb-1.5 block text-xs font-semibold text-slate-600">Password baru</span><input type="password" autoComplete="new-password" minLength={8} required value={newAdminPassword} onChange={e => setNewAdminPassword(e.target.value)} className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-sage-500 focus:ring-2 focus:ring-sage-100" /><span className="mt-1 block text-[11px] text-slate-400">Minimal 8 karakter.</span></label>
+            <label className="block"><span className="mb-1.5 block text-xs font-semibold text-slate-600">Ulangi password baru</span><input type="password" autoComplete="new-password" minLength={8} required value={confirmAdminPassword} onChange={e => setConfirmAdminPassword(e.target.value)} className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-sage-500 focus:ring-2 focus:ring-sage-100" /></label>
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => { setShowChangePassword(false); setCurrentAdminPassword(""); setNewAdminPassword(""); setConfirmAdminPassword(""); setError(""); }} className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50">Batal</button>
+              <button disabled={passwordBusy || !currentAdminPassword || !newAdminPassword || !confirmAdminPassword} className="inline-flex items-center justify-center gap-2 rounded-xl bg-sage-700 px-4 py-3 text-sm font-semibold text-white hover:bg-sage-600 disabled:cursor-not-allowed disabled:opacity-60">{passwordBusy ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />} Simpan password baru</button>
+            </div>
+          </form>
+          <p className="mt-4 text-[11px] leading-relaxed text-slate-400">Password diperbarui langsung melalui Firebase Authentication dan tidak disimpan di Firestore.</p>
+        </div>
+      </div> : null}
 
       {showLogin && !isAdmin ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4 backdrop-blur-sm">
         <div className="w-full max-w-md rounded-3xl border border-white/70 bg-white p-6 shadow-2xl sm:p-8">
