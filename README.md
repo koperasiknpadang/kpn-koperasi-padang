@@ -57,7 +57,7 @@ Importer menyimpan snapshot bulanan ke `monthly_records` dan memperbarui data an
 ## Struktur Firestore
 - `admins/{uid}`: peran dan status administrator.
 - `members/{memberId}`: master anggota.
-- `loans/{loanId}`: posisi pinjaman terkini per anggota dan sumber.
+- `loans/{loanId}`: posisi pinjaman terkini per anggota dan sumber.\n- `loan_snapshots/{snapshotId}`: arsip rincian pinjaman per periode (tidak dapat diubah setelah dibuat).
 - `periods/{YYYY-MM}`: periode bulanan dan status.
 - `monthly_records/{recordId}`: snapshot potongan/transaksi per anggota, sumber, dan periode.
 - `public_summaries/current`: ringkasan agregat yang boleh dibaca publik.
