@@ -286,13 +286,13 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
     row.bankSource = bankByMember.get(row.normalizedName) ?? null;
     // Koreksi tenor Alextra sesuai konfirmasi pengelola; tidak mengubah workbook asli.
     if (row.normalizedName === "alextra" && row.originalLoanAmount > 0) row.termMonths = 20;
-    if (row.bankSource && row.outstandingPrincipal > 0 && row.installmentNumber === null) {
+    if (row.outstandingPrincipal > 0 && row.installmentNumber === null) {
       warnings.push("STOP: Nomor angsuran belum diisi untuk pinjaman " + row.memberName + " pada Pot. Koperasi.");
     }
-    if (row.bankSource && row.originalLoanAmount > 0 && row.termMonths === null) {
+    if (row.originalLoanAmount > 0 && row.termMonths === null) {
       warnings.push("PERIKSA: Tenor pinjaman " + row.memberName + " belum diisi pada Pot. Koperasi. Tenor tidak akan ditebak.");
     }
-    if (row.bankSource && row.outstandingPrincipal > 0 && row.originalLoanAmount <= 0) {
+    if (row.outstandingPrincipal > 0 && row.originalLoanAmount <= 0) {
       warnings.push("STOP: Sisa pinjaman ada tetapi pokok awal kosong untuk " + row.memberName + " pada Pot. Koperasi.");
     }
   }
