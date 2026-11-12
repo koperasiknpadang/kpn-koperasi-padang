@@ -19,3 +19,113 @@ button { cursor: pointer; }
   background-image: radial-gradient(#dbe5d7 0.7px, transparent 0.7px);
   background-size: 18px 18px;
 }
+
+
+/* Elegant live date and time panel */
+.datetime-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid rgba(208, 222, 204, .95);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(255,255,255,.98), rgba(244,249,241,.96));
+  box-shadow: 0 5px 18px rgba(39, 65, 47, .07), inset 0 1px 0 rgba(255,255,255,.9);
+  transition: transform .25s ease, box-shadow .25s ease, border-color .25s ease;
+  animation: datetime-enter .55s cubic-bezier(.2,.8,.2,1) both;
+}
+.datetime-panel:hover {
+  transform: translateY(-1px);
+  border-color: #b8cdb1;
+  box-shadow: 0 9px 24px rgba(39, 65, 47, .11);
+}
+.datetime-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 11px;
+  color: #477454;
+  background: linear-gradient(145deg, #edf5e9, #e2eedf);
+}
+.datetime-caption {
+  color: #718276;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .13em;
+  line-height: 1.2;
+}
+.datetime-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #64806a;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+.datetime-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #5d9a69;
+  box-shadow: 0 0 0 0 rgba(93,154,105,.45);
+  animation: datetime-pulse 1.8s ease-out infinite;
+}
+.datetime-digits {
+  color: #284b35;
+  font-size: 21px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.055em;
+  line-height: 1.2;
+}
+.datetime-seconds {
+  min-width: 14px;
+  color: #8a9b8d;
+  font-size: 10px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.datetime-date {
+  overflow: hidden;
+  color: #758278;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.datetime-clock-mark {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  color: #a2b5a0;
+  animation: datetime-tick 2s ease-in-out infinite;
+}
+@keyframes datetime-enter {
+  from { opacity: 0; transform: translateY(-7px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes datetime-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(93,154,105,.42); }
+  70% { box-shadow: 0 0 0 5px rgba(93,154,105,0); }
+  100% { box-shadow: 0 0 0 0 rgba(93,154,105,0); }
+}
+@keyframes datetime-tick {
+  0%, 100% { opacity: .65; transform: rotate(-7deg); }
+  50% { opacity: 1; transform: rotate(7deg); }
+}
+@media (max-width: 420px) {
+  .datetime-panel { gap: 7px; padding: 7px 8px; border-radius: 13px; }
+  .datetime-icon { width: 30px; height: 30px; border-radius: 9px; }
+  .datetime-digits { font-size: 18px; }
+  .datetime-date { max-width: 130px; font-size: 9px; }
+  .datetime-clock-mark { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .datetime-panel, .datetime-live-dot, .datetime-clock-mark { animation: none !important; }
+  .datetime-panel { transition: none; }
+}

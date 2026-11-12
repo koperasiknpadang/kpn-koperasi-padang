@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
-  AlertCircle, ArrowUpRight, Banknote, BarChart3, CalendarDays, CheckCircle2,
+  AlertCircle, ArrowUpRight, Banknote, BarChart3, CalendarDays, CheckCircle2, Clock3,
   FileSpreadsheet, Landmark, LayoutDashboard, Loader2, LockKeyhole, LogOut,
   RefreshCw, Search, ShieldCheck, UploadCloud, Users, Wallet
 } from "lucide-react";
@@ -623,7 +623,21 @@ export default function App() {
               <p className="text-[11px] text-slate-500">Kejaksaan Negeri Padang</p>
             </div>
           </div>
-          <div className="flex shrink-0 rounded-xl border border-sage-100 bg-white px-2 py-1.5 text-right leading-tight sm:px-3 sm:py-2"><p className="hidden text-[10px] text-slate-400 sm:block">Waktu Padang (WIB)</p><p className="text-[11px] font-semibold tabular-nums text-sage-800 sm:text-xs">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(currentTime)}</p><p className="hidden text-[10px] text-slate-500 sm:block">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", weekday: "short", day: "2-digit", month: "short", year: "numeric" }).format(currentTime)}</p></div>
+          <div className="datetime-panel group" aria-label="Tanggal dan waktu Padang">
+            <div className="datetime-icon"><CalendarDays size={17} /></div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="datetime-caption">WAKTU PADANG</span>
+                <span className="datetime-live"><span className="datetime-live-dot" /> WIB</span>
+              </div>
+              <div className="flex items-baseline gap-1.5">
+                <time className="datetime-digits" dateTime={currentTime.toISOString()}>{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", hour12: false }).format(currentTime)}</time>
+                <span className="datetime-seconds">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", second: "2-digit", hour12: false }).format(currentTime)}</span>
+              </div>
+              <p className="datetime-date">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", weekday: "long", day: "2-digit", month: "long", year: "numeric" }).format(currentTime)}</p>
+            </div>
+            <Clock3 className="datetime-clock-mark" size={17} />
+          </div>
           {isAdmin ? (
             <div className="flex items-center gap-3">
               <span className="hidden rounded-full bg-sage-50 px-3 py-1.5 text-xs font-medium text-sage-700 sm:inline-flex"><ShieldCheck size={14} className="mr-1.5" /> Super Admin</span>
