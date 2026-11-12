@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   AlertCircle, ArrowUpRight, Banknote, BarChart3, CalendarDays, CheckCircle2,
   FileSpreadsheet, Landmark, LayoutDashboard, Loader2, LockKeyhole, LogOut,
@@ -33,7 +33,7 @@ const money = (value: unknown) => new Intl.NumberFormat("id-ID", {
 
 const number = (value: unknown) => new Intl.NumberFormat("id-ID").format(Number(value) || 0);
 
-function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <section className={"surface rounded-2xl p-5 " + className}>{children}</section>;
 }
 
@@ -167,7 +167,7 @@ export default function App() {
     if (isAdmin) void refreshAdminData();
   }, [isAdmin]);
 
-  async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoginBusy(true);
     setError("");
@@ -217,9 +217,16 @@ export default function App() {
       const loanDocs = new Map<string, AnyRecord>();
       const recordDocs = new Map<string, AnyRecord>();
 
-      preview.rows.forEach((row: ImportedRow) => {
+      const masterRows = preview.rows.filter(row => row.source === "KOPERASI");
+      const bankRows = preview.rows.filter(row => row.source === "MANDIRI" || row.source === "BRI");
+      if (masterRows.length === 0) {
+        throw new Error("Sheet Pot. Koperasi tidak menghasilkan data anggota. Periksa workbook sebelum impor.");
+      }
+
+      // Pot. Koperasi adalah sheet konsolidasi: simpan satu kali untuk potongan/simpanan bulanan.
+      // Sheet MANDIRI dan BRI adalah rincian sumber pinjaman, bukan transaksi tambahan.
+      masterRows.forEach((row: ImportedRow) => {
         const memberId = stableId("member", row.normalizedName);
-        const loanId = stableId("loan_" + row.source.toLowerCase(), row.normalizedName);
         memberDocs.set(memberId, {
           name: row.memberName,
           normalizedName: row.normalizedName,
@@ -227,36 +234,13 @@ export default function App() {
           updatedAt: serverTimestamp()
         });
 
-        const hasLoan = row.originalLoanAmount > 0 || row.outstandingPrincipal > 0 ||
-          row.principalPaid > 0 || row.interestPaid > 0;
-        if (hasLoan) {
-          loanDocs.set(loanId, {
-            memberId,
-            memberName: row.memberName,
-            source: row.source,
-            originalPrincipal: row.originalLoanAmount,
-            outstandingPrincipal: row.outstandingPrincipal,
-            installmentPrincipal: row.principalPaid,
-            monthlyInterest: row.interestPaid,
-            installmentTotal: row.installmentTotal,
-            installmentNumber: row.installmentNumber,
-            termMonths: row.termMonths,
-            interestRate: row.interestRate,
-            note: row.note,
-            lastPeriodId: preview.periodId,
-            status: row.outstandingPrincipal > 0 ? "active" : "paid",
-            updatedAt: serverTimestamp()
-          });
-        }
-
-        const recordId = stableId("record", preview.periodId + "_" + row.source + "_" + row.normalizedName);
+        const recordId = stableId("record", preview.periodId + "_" + row.normalizedName);
         recordDocs.set(recordId, {
           periodId: preview.periodId,
           memberId,
           memberName: row.memberName,
-          loanId: hasLoan ? loanId : null,
-          source: row.source,
-          sourceSheet: row.source === "KOPERASI" ? "Pot. Koperasi" : row.source,
+          source: "KOPERASI",
+          sourceSheet: "Pot. Koperasi",
           sourceRow: row.rowNumber,
           savingsPrincipal: row.savingsPrincipal,
           savingsMandatory: row.savingsMandatory,
@@ -274,6 +258,40 @@ export default function App() {
           nextMonthInstallmentNumber: row.nextMonthInstallmentNumber,
           note: row.note,
           importedAt: serverTimestamp()
+        });
+      });
+
+      bankRows.forEach((row: ImportedRow) => {
+        const memberId = stableId("member", row.normalizedName);
+        if (!memberDocs.has(memberId)) {
+          memberDocs.set(memberId, {
+            name: row.memberName,
+            normalizedName: row.normalizedName,
+            active: true,
+            updatedAt: serverTimestamp()
+          });
+        }
+        const hasLoan = row.originalLoanAmount > 0 || row.outstandingPrincipal > 0 ||
+          row.principalPaid > 0 || row.interestPaid > 0;
+        if (!hasLoan) return;
+
+        const loanId = stableId("loan_" + row.source.toLowerCase(), row.normalizedName);
+        loanDocs.set(loanId, {
+          memberId,
+          memberName: row.memberName,
+          source: row.source,
+          originalPrincipal: row.originalLoanAmount,
+          outstandingPrincipal: row.outstandingPrincipal,
+          installmentPrincipal: row.principalPaid,
+          monthlyInterest: row.interestPaid,
+          installmentTotal: row.installmentTotal,
+          installmentNumber: row.installmentNumber,
+          termMonths: row.termMonths,
+          interestRate: row.interestRate,
+          note: row.note,
+          lastPeriodId: preview.periodId,
+          status: row.outstandingPrincipal > 0 ? "active" : "paid",
+          updatedAt: serverTimestamp()
         });
       });
 
@@ -329,15 +347,20 @@ export default function App() {
     let outstandingTotal = 0;
     const memberIds = new Set<string>();
 
+    // Monthly records hanya berasal dari sheet konsolidasi Pot. Koperasi.
     records.forEach((record) => {
       if (record.memberId) memberIds.add(String(record.memberId));
       savingsTotal += Number(record.savingsPrincipal || 0) + Number(record.savingsMandatory || 0) + Number(record.savingsVoluntary || 0);
       principalPaid += Number(record.principalPaid || 0);
       interestPaid += Number(record.interestPaid || 0);
       totalDeduction += Number(record.totalDeduction || 0);
-      const outstanding = Number(record.outstandingPrincipal || 0);
+    });
+
+    // Saldo pinjaman dirinci dari dua sheet sumber bank agar tidak dihitung ganda.
+    loans.forEach((loan) => {
+      const outstanding = Number(loan.outstandingPrincipal || 0);
       outstandingTotal += outstanding;
-      const source = String(record.source || "LAINNYA");
+      const source = String(loan.source || "LAINNYA");
       bySource[source] = (bySource[source] || 0) + outstanding;
     });
 
@@ -381,12 +404,12 @@ export default function App() {
 
   const chartData = useMemo(() => {
     const grouped: Record<string, number> = {};
-    records.forEach(row => {
-      const source = String(row.source || "LAINNYA");
-      grouped[source] = (grouped[source] || 0) + Number(row.outstandingPrincipal || 0);
+    loans.forEach(loan => {
+      const source = String(loan.source || "LAINNYA");
+      grouped[source] = (grouped[source] || 0) + Number(loan.outstandingPrincipal || 0);
     });
     return Object.entries(grouped).map(([source, outstanding]) => ({ source: sourceLabel(source), outstanding }));
-  }, [records]);
+  }, [loans]);
 
   const filteredMembers = members.filter(member =>
     String(member.name || "").toLowerCase().includes(search.toLowerCase())
