@@ -371,6 +371,10 @@ export default function App() {
       "Simpanan Sukarela": Number(row.savingsVoluntary || 0),
       "Angsuran Pokok": Number(row.principalPaid || 0),
       "Bunga": Number(row.interestPaid || 0),
+      "Tarif Bunga per Bulan": Number(row.interestRate ?? 0.01),
+      "Nomor Cicilan Periode Ini": row.installmentNumber ?? "",
+      "Nomor Cicilan Periode Berikutnya": row.nextMonthInstallmentNumber ?? "",
+      "Tenor (Bulan)": row.termMonths ?? "",
       "Total Angsuran": Number(row.installmentTotal || 0),
       "Total Potongan": Number(row.totalDeduction || 0),
       "Sisa Pinjaman": Number(row.outstandingPrincipal || 0)
@@ -381,6 +385,9 @@ export default function App() {
       "Bank": loan.source || "", "Pokok Pinjaman": Number(loan.originalPrincipal || 0),
       "Angsuran Pokok": Number(loan.installmentPrincipal || 0),
       "Bunga": Number(loan.monthlyInterest || 0),
+      "Tarif Bunga per Bulan": Number(loan.interestRate ?? 0.01),
+      "Nomor Cicilan Periode Ini": loan.installmentNumber ?? "",
+      "Tenor (Bulan)": loan.termMonths ?? "",
       "Sisa Pinjaman": Number(loan.outstandingPrincipal || 0), "Status": loan.status || ""
     }));
     const periodSheet = periods.map((period, index) => ({
