@@ -251,6 +251,13 @@ export default function App() {
         throw new Error("Periode " + preview.periodId + " sudah ada. Impor dibatalkan agar data historis tidak tertimpa.");
       }
 
+      // Read existing member status once so a monthly workbook import never
+      // silently reactivates a member previously marked as inactive.
+      const existingMembersSnap = await getDocs(collection(db, "members"));
+      const existingMemberStatus = new Map(
+        existingMembersSnap.docs.map(item => [item.id, item.data().active])
+      );
+
       const memberDocs = new Map<string, AnyRecord>();
       const loanDocs = new Map<string, AnyRecord>();
       const loanSnapshotDocs = new Map<string, AnyRecord>();
@@ -269,7 +276,7 @@ export default function App() {
         memberDocs.set(memberId, {
           name: row.memberName,
           normalizedName: row.normalizedName,
-          active: true,
+          active: existingMemberStatus.get(memberId) === false ? false : true,
           origin: "workbook_import",
           updatedAt: serverTimestamp()
         });
