@@ -156,6 +156,7 @@ export default function FinancialApp() {
   const [cashTransactions, setCashTransactions] = useState<Row[]>([]);
   const [journals, setJournals] = useState<Row[]>([]);
   const [periods, setPeriods] = useState<Row[]>([]);
+  const [monthlyRecords, setMonthlyRecords] = useState<Row[]>([]);
 
   const [editingMemberId, setEditingMemberId] = useState("");
   const [selectedMemberId, setSelectedMemberId] = useState("");
@@ -196,7 +197,7 @@ export default function FinancialApp() {
     try {
       const names = [
         "members", "savings_transactions", "loan_applications", "loans",
-        "installments", "cash_transactions", "journal_entries", "periods"
+        "installments", "cash_transactions", "journal_entries", "periods", "monthly_records"
       ];
       const snaps = await Promise.all(names.map(name => getDocs(collection(db, name))));
       const rows: Row[][] = snaps.map(snap => snap.docs.map(item => ({ id: item.id, ...item.data() } as Row)));
@@ -208,6 +209,7 @@ export default function FinancialApp() {
       setCashTransactions(rows[5].sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))));
       setJournals(rows[6].sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))));
       setPeriods(rows[7].sort((a, b) => String(b.id).localeCompare(String(a.id))));
+      setMonthlyRecords(rows[8].filter(item => Array.isArray(item.masterRows)).sort((a,b)=>String(b.periodId||"").localeCompare(String(a.periodId||""))));
     } catch (e: any) {
       setError(e?.message || "Gagal memuat data. Periksa koneksi dan Firestore Security Rules.");
     } finally { setBusy(""); }
@@ -1002,6 +1004,8 @@ export default function FinancialApp() {
   const filteredInstallments = installments.filter(item => reportPeriod === "all" || item.periodId === reportPeriod);
   const filteredCash = cashTransactions.filter(item => reportPeriod === "all" || item.periodId === reportPeriod);
   const filteredJournals = journals.filter(item => reportPeriod === "all" || item.periodId === reportPeriod);
+  const monthlyImportRows = monthlyRecords.filter(item => reportPeriod === "all" || item.periodId === reportPeriod)
+    .flatMap(item => (item.masterRows || []).map((row: Row) => ({ ...row, periodId: item.periodId })));
   const trialBalance = useMemo(() => {
     const accounts = new Map<string, { code: string; name: string; debit: number; credit: number }>();
     filteredJournals.forEach(entry => (entry.lines || []).forEach((line: Row) => {
@@ -1040,6 +1044,15 @@ export default function FinancialApp() {
       "Anggota": l.memberName, "Sumber": l.source, "Pokok Awal": l.principal,
       "Sisa Pokok": l.outstandingPrincipal, "Bunga Bulanan": l.monthlyInterest,
       "Tenor": l.termMonths, "Angsuran Ke": l.installmentNumber, "Status": l.status
+    })));
+    add("Potongan Bulanan", monthlyImportRows.map(row => ({
+      "Periode": row.periodId, "No. Anggota": row.memberNo, "Nama Anggota": row.memberName,
+      "Simpanan Pokok": row.savingsPrincipal, "Simpanan Wajib": row.savingsMandatory,
+      "Simpanan Sukarela": row.savingsVoluntary, "Angsuran Pokok": row.principalPaid,
+      "Bunga": row.interestPaid, "Total Angsuran": row.installmentTotal,
+      "Total Potongan": row.totalDeduction, "Sisa Pinjaman": row.outstandingPrincipal,
+      "Pokok Awal Pinjaman": row.originalLoanAmount, "Tenor": row.termMonths,
+      "Nomor Angsuran": row.installmentNumber, "Catatan": row.note || ""
     })));
     add("Angsuran", filteredInstallments.map(t => ({
       "Tanggal": t.date, "Periode": t.periodId, "Anggota": t.memberName, "Jenis": t.kind,
@@ -1347,6 +1360,9 @@ export default function FinancialApp() {
           </Card>
           <Card><div className="mb-4 flex items-center justify-between"><div><h2 className="font-semibold">Jurnal umum</h2><p className="mt-1 text-xs text-slate-500">{fmtNumber(filteredJournals.length)} jurnal pada filter terpilih</p></div><ClipboardList size={19} className="text-emerald-700"/></div>
             {filteredJournals.length?<div className="overflow-x-auto"><table className="w-full min-w-[700px] text-left text-sm"><thead><tr className="border-b border-slate-100 text-xs text-slate-400"><th className="py-3">Tanggal</th><th>Periode</th><th>Uraian</th><th className="text-right">Debit</th><th className="text-right">Kredit</th></tr></thead><tbody>{filteredJournals.map(j=><tr key={j.id} className="border-b border-slate-50"><td className="py-3">{dateLabel(j.date)}</td><td>{j.periodId}</td><td>{j.memo}</td><td className="text-right">{money(j.totalDebit)}</td><td className="text-right">{money(j.totalCredit)}</td></tr>)}</tbody></table></div>:<Empty title="Belum ada jurnal" detail="Jurnal akan dibuat otomatis saat transaksi disimpan."/>}
+          </Card>
+          <Card><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Rincian potongan bulanan dari Excel</h2><p className="mt-1 text-xs text-slate-500">{fmtNumber(monthlyImportRows.length)} baris anggota pada filter periode</p></div><FileSpreadsheet size={18} className="text-emerald-700"/></div>
+            {monthlyImportRows.length?<div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-xs"><thead><tr className="border-b border-slate-100 text-slate-400"><th className="py-3">Periode</th><th>No.</th><th>Nama anggota</th><th className="text-right">Simpanan pokok</th><th className="text-right">Simpanan wajib</th><th className="text-right">Simpanan sukarela</th><th className="text-right">Angsuran pokok</th><th className="text-right">Bunga</th><th className="text-right">Total potongan</th></tr></thead><tbody>{monthlyImportRows.map((row,index)=><tr key={row.periodId+"-"+row.memberNo+"-"+index} className="border-b border-slate-50"><td className="py-3">{periodLabel(row.periodId)}</td><td>{row.memberNo}</td><td className="font-medium">{row.memberName}</td><td className="text-right">{money(row.savingsPrincipal)}</td><td className="text-right">{money(row.savingsMandatory)}</td><td className="text-right">{money(row.savingsVoluntary)}</td><td className="text-right">{money(row.principalPaid)}</td><td className="text-right">{money(row.interestPaid)}</td><td className="text-right font-semibold">{money(row.totalDeduction)}</td></tr>)}</tbody></table></div>:<Empty title="Belum ada rincian potongan Excel" detail="Impor workbook bulanan untuk menyimpan rincian potongan anggota per periode."/>}
           </Card>
           <div className="flex flex-wrap gap-2"><button className={buttonPrimary} onClick={exportReports}><Download size={16}/>Unduh laporan Excel</button><button className={buttonSecondary} onClick={()=>window.print()}><Printer size={16}/>Cetak / simpan PDF</button><button className={buttonSecondary} disabled={busy==="publish"} onClick={()=>void publishSummary()}>{busy==="publish"?<Loader2 size={16} className="animate-spin"/>:<ShieldCheck size={16}/>}Publikasikan ringkasan publik</button></div>
         </div> : null}
