@@ -587,6 +587,7 @@ export default function App() {
               <p className="text-[11px] text-slate-500">Kejaksaan Negeri Padang</p>
             </div>
           </div>
+          <div className="hidden rounded-xl border border-sage-100 bg-white px-3 py-2 text-right leading-tight sm:block"><p className="text-[10px] text-slate-400">Waktu Padang (WIB)</p><p className="text-xs font-semibold tabular-nums text-sage-800">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(currentTime)}</p><p className="text-[10px] text-slate-500">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", weekday: "short", day: "2-digit", month: "short", year: "numeric" }).format(currentTime)}</p></div>
           {isAdmin ? (
             <div className="flex items-center gap-3">
               <span className="hidden rounded-full bg-sage-50 px-3 py-1.5 text-xs font-medium text-sage-700 sm:inline-flex"><ShieldCheck size={14} className="mr-1.5" /> Super Admin</span>
@@ -624,7 +625,6 @@ export default function App() {
                 <p className="mt-1 text-sm text-slate-500">Kelola data koperasi dan laporan bulanan.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <div className="rounded-xl border border-sage-100 bg-white px-3 py-2 text-right leading-tight"><p className="text-[10px] text-slate-400">Waktu Padang (WIB)</p><p className="text-xs font-semibold tabular-nums text-sage-800">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(currentTime)}</p><p className="text-[10px] text-slate-500">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", weekday: "short", day: "2-digit", month: "short", year: "numeric" }).format(currentTime)}</p></div>
                 <button onClick={exportCurrentData} className="inline-flex items-center gap-2 rounded-xl border border-sage-200 bg-white px-3 py-2 text-sm font-medium text-sage-800 hover:bg-sage-50"><FileSpreadsheet size={15} /> Ekspor Excel</button>
                 <button onClick={() => void refreshAdminData()} className="inline-flex items-center gap-2 rounded-xl border border-sage-200 bg-white px-3 py-2 text-sm font-medium text-sage-800 hover:bg-sage-50"><RefreshCw size={15} className={dataBusy ? "animate-spin" : ""} /> Segarkan</button>
               </div>
