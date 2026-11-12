@@ -90,6 +90,7 @@ export default function App() {
   const [preview, setPreview] = useState<WorkbookPreview | null>(null);
   const [fileName, setFileName] = useState("");
   const [importBusy, setImportBusy] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
 
   async function loadPublicSummary() {
     try {
@@ -240,6 +241,7 @@ export default function App() {
           name: row.memberName,
           normalizedName: row.normalizedName,
           active: true,
+          origin: "workbook_import",
           updatedAt: serverTimestamp()
         });
 
@@ -277,6 +279,7 @@ export default function App() {
             name: row.memberName,
             normalizedName: row.normalizedName,
             active: true,
+            origin: "workbook_import",
             updatedAt: serverTimestamp()
           });
         }
@@ -350,6 +353,57 @@ export default function App() {
       setError(e?.message || "Impor gagal disimpan.");
     } finally {
       setImportBusy(false);
+    }
+  }
+
+  async function resetInitialData() {
+    if (!isAdmin || resetBusy) return;
+    const phrase = window.prompt("Reset hanya untuk menghapus data awal hasil impor yang masih dummy/tidak lengkap. Ketik RESET DATA AWAL untuk melanjutkan:");
+    if (phrase !== "RESET DATA AWAL") return;
+    setResetBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const periodSnap = await getDocs(collection(db, "periods"));
+      const published = periodSnap.docs.filter(item => item.data().status === "published");
+      if (published.length) {
+        throw new Error("Reset dibatalkan. Terdapat periode yang sudah dipublikasikan. Data terverifikasi tidak boleh dihapus melalui fitur reset awal.");
+      }
+      const collectionsToClear = ["monthly_records", "loan_snapshots", "loans", "members", "periods"];
+      let deletedCount = 0;
+      for (const collectionName of collectionsToClear) {
+        const snapshot = await getDocs(collection(db, collectionName));
+        for (let offset = 0; offset < snapshot.docs.length; offset += 400) {
+          const chunk = snapshot.docs.slice(offset, offset + 400);
+          const batch = writeBatch(db);
+          chunk.forEach(item => batch.delete(item.ref));
+          await batch.commit();
+          deletedCount += chunk.length;
+        }
+      }
+      await setDoc(doc(db, "public_summaries", "current"), {
+        periodId: null, periodLabel: "Belum ada data awal", memberCount: 0,
+        savingsTotal: 0, principalPaid: 0, interestPaid: 0, totalDeduction: 0,
+        outstandingTotal: 0, lenderBreakdown: [], resetAt: serverTimestamp()
+      });
+      await setDoc(doc(collection(db, "audit_logs")), {
+        action: "RESET_INITIAL_IMPORT_DATA", deletedDocuments: deletedCount,
+        actorUid: user?.uid || null, createdAt: serverTimestamp()
+      });
+      setPreview(null);
+      setFileName("");
+      setRecords([]);
+      setLoans([]);
+      setMembers([]);
+      setPeriods([]);
+      setMessage("Data awal hasil impor berhasil direset. Akun administrator dan pengaturan sistem tetap dipertahankan. Silakan unggah workbook yang sudah benar.");
+      setTab("import");
+      await refreshAdminData();
+      await loadPublicSummary();
+    } catch (e: any) {
+      setError(e?.message || "Reset data awal gagal. Periksa kembali hak akses dan aturan keamanan.");
+    } finally {
+      setResetBusy(false);
     }
   }
 
@@ -579,6 +633,10 @@ export default function App() {
             {tab === "import" ? (
               <div className="space-y-4">
                 <Card>
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div><h2 className="font-semibold">Data awal koperasi</h2><p className="mt-1 text-xs text-slate-500">Reset hanya untuk tahap persiapan sebelum ada periode yang dipublikasikan.</p></div>
+                    <button onClick={() => void resetInitialData()} disabled={resetBusy || importBusy} className="inline-flex items-center gap-2 rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"><RefreshCw size={14} className={resetBusy ? "animate-spin" : ""} /> {resetBusy ? "Mereset..." : "Reset data awal"}</button>
+                  </div>
                   <div className="flex items-start gap-3"><div className="rounded-xl bg-sage-50 p-3 text-sage-700"><UploadCloud size={22} /></div><div><h2 className="font-semibold">Impor workbook bulanan</h2><p className="mt-1 text-sm text-slate-500">Pilih file Excel dengan sheet Pot. Koperasi, MANDIRI, dan BRI. Data akan diperiksa terlebih dahulu sebelum disimpan.</p></div></div>
                   <label className="mt-5 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-sage-200 bg-sage-50/50 px-5 py-9 text-center hover:bg-sage-50">
                     <FileSpreadsheet size={28} className="text-sage-600" />
