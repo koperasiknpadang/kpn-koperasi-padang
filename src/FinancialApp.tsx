@@ -4,7 +4,7 @@ import {
   EmailAuthProvider, reauthenticateWithCredential, updatePassword, type User
 } from "firebase/auth";
 import {
-  collection, doc, getDoc, getDocs, runTransaction, serverTimestamp,
+  collection, doc, getDoc, getDocs, limit, query, runTransaction, serverTimestamp,
   writeBatch, updateDoc
 } from "firebase/firestore";
 import {
@@ -12,7 +12,7 @@ import {
   BarChart3, BookOpen, CalendarDays, CheckCircle2, ChevronRight,
   CircleDollarSign, ClipboardList, Download, FileSpreadsheet, KeyRound,
   Landmark, LayoutDashboard, Loader2, LockKeyhole, LogOut, Plus,
-  Printer, RefreshCw, Search, ShieldCheck, TrendingDown, TrendingUp,
+  Printer, RefreshCw, Search, ShieldAlert, ShieldCheck, Trash2, TrendingDown, TrendingUp,
   Users, Wallet, X
 } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -130,6 +130,7 @@ function memberIdFromNumber(value: string) {
 export default function FinancialApp() {
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [showLogin, setShowLogin] = useState(false);
   const [email, setEmail] = useState("koperasiknpadang@gmail.com");
@@ -140,6 +141,10 @@ export default function FinancialApp() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordBusy, setPasswordBusy] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetPhrase, setResetPhrase] = useState("");
+  const [resetAdminPassword, setResetAdminPassword] = useState("");
+  const [resetError, setResetError] = useState("");
   const [tab, setTab] = useState<Tab>("dashboard");
   const [now, setNow] = useState(new Date());
   const [busy, setBusy] = useState("");
@@ -225,6 +230,7 @@ export default function FinancialApp() {
       setUser(currentUser);
       if (!currentUser) {
         setIsAdmin(false);
+        setIsSuperAdmin(false);
         setAuthLoading(false);
         return;
       }
@@ -234,15 +240,18 @@ export default function FinancialApp() {
         const allowed = data?.active === true && ["super_admin", "admin"].includes(data?.role);
         if (allowed) {
           setIsAdmin(true);
+          setIsSuperAdmin(data?.role === "super_admin");
           setShowLogin(false);
           setError("");
         } else {
           setIsAdmin(false);
+          setIsSuperAdmin(false);
           setError("Akun berhasil masuk, tetapi belum terdaftar sebagai administrator aktif.");
           await signOut(auth);
         }
       } catch (e: any) {
         setIsAdmin(false);
+        setIsSuperAdmin(false);
         setError(e?.message || "Pemeriksaan hak akses administrator gagal.");
         await signOut(auth);
       } finally { setAuthLoading(false); }
@@ -988,6 +997,91 @@ export default function FinancialApp() {
     finally { setBusy(""); }
   }
 
+  async function resetAllData(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!isSuperAdmin) {
+      setResetError("Hanya super administrator yang dapat menjalankan reset data.");
+      return;
+    }
+    if (resetPhrase !== "RESET SEMUA DATA") {
+      setResetError('Ketik persis "RESET SEMUA DATA" untuk melanjutkan.');
+      return;
+    }
+    if (!user?.email || !resetAdminPassword) {
+      setResetError("Masukkan password akun administrator untuk verifikasi.");
+      return;
+    }
+
+    const collectionsToReset = [
+      "members", "savings_transactions", "loan_applications", "loans",
+      "installments", "cash_transactions", "journal_entries", "periods",
+      "monthly_records", "loan_snapshots", "public_summaries", "audit_logs"
+    ];
+    let deletedDocuments = 0;
+    setBusy("reset");
+    setResetError("");
+    setError("");
+    setMessage("");
+
+    try {
+      await reauthenticateWithCredential(
+        user,
+        EmailAuthProvider.credential(user.email, resetAdminPassword)
+      );
+
+      for (const collectionName of collectionsToReset) {
+        while (true) {
+          const page = await getDocs(query(collection(db, collectionName), limit(400)));
+          if (page.empty) break;
+          const batch = writeBatch(db);
+          page.docs.forEach(item => batch.delete(item.ref));
+          await batch.commit();
+          deletedDocuments += page.size;
+        }
+      }
+
+      setMembers([]);
+      setSavingsTransactions([]);
+      setApplications([]);
+      setLoans([]);
+      setInstallments([]);
+      setCashTransactions([]);
+      setJournals([]);
+      setPeriods([]);
+      setMonthlyRecords([]);
+      setPublicSummary(null);
+      setEditingMemberId("");
+      setSelectedMemberId("");
+      setPreview(null);
+      setFileName("");
+      setSelectedWorkbookFile(null);
+      setWorkbookPassword("");
+      setPasswordRequired(false);
+      setReportPeriod("all");
+      setSearch("");
+      setTab("dashboard");
+      setShowResetModal(false);
+      setResetPhrase("");
+      setResetAdminPassword("");
+      setMessage(
+        "Reset berhasil. " + fmtNumber(deletedDocuments) +
+        " dokumen data aplikasi telah dihapus. Akun administrator tetap dipertahankan."
+      );
+    } catch (e: any) {
+      setResetError(
+        "Reset terhenti setelah " + fmtNumber(deletedDocuments) +
+        " dokumen berhasil dihapus. Periksa hak akses Firestore dan jalankan kembali bila diperlukan. " +
+        (e?.message || "")
+      );
+      try {
+        await refreshAll();
+        await loadPublicSummary();
+      } catch { /* Keep the reset error visible in the confirmation dialog. */ }
+    } finally {
+      setBusy("");
+    }
+  }
+
   const totalSavings = useMemo(() => members.reduce((sum, member) =>
     sum + Object.values({ ...zeroBalances, ...(member.savingsBalances || {}) }).reduce((a: number, b: any) => a + Number(b || 0), 0), 0), [members]);
   const cashBalance = useMemo(() => cashTransactions.reduce((sum, item) =>
@@ -1101,6 +1195,13 @@ export default function FinancialApp() {
         </div>
         {isAdmin ? <div className="flex items-center gap-2">
           <span className="hidden rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 sm:inline-flex"><ShieldCheck size={14} className="mr-1.5" /> Administrator</span>
+          {isSuperAdmin ? <button
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100"
+            onClick={() => {
+              setError(""); setMessage(""); setResetError("");
+              setResetPhrase(""); setResetAdminPassword(""); setShowResetModal(true);
+            }}
+          ><Trash2 size={15}/><span className="hidden sm:inline">Reset data</span></button> : null}
           <button className={buttonSecondary} onClick={() => { setError(""); setShowPassword(true); }}><KeyRound size={15} /><span className="hidden sm:inline">Ganti password</span></button>
           <button className={buttonSecondary} onClick={() => void signOut(auth)}><LogOut size={15} /> Keluar</button>
         </div> : <button className={buttonPrimary} onClick={() => { setError(""); setShowLogin(true); }}><LockKeyhole size={15} /> Masuk Pengelola</button>}
@@ -1396,6 +1497,44 @@ export default function FinancialApp() {
       <form onSubmit={handleLogin} className="space-y-4"><Field label="Email administrator"><input className={inputClass} type="email" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)}/></Field><Field label="Password"><input className={inputClass} type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)}/></Field><button className={"w-full "+buttonPrimary} disabled={loginBusy}>{loginBusy?<Loader2 size={16} className="animate-spin"/>:<LockKeyhole size={16}/>}Masuk</button></form>
       <p className="mt-4 text-center text-[11px] text-slate-400">Akses diperiksa melalui Firebase Authentication dan dokumen administrator.</p>
     </div></div>:null}
+
+    {showResetModal && isSuperAdmin ? <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-xl rounded-3xl border border-rose-100 bg-white p-6 shadow-2xl sm:p-8">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div>
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-100 text-rose-700"><ShieldAlert size={23}/></div>
+            <h2 className="text-xl font-bold text-slate-900">Reset seluruh data aplikasi?</h2>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">Tindakan ini menghapus permanen seluruh dokumen data operasional dari Firestore. Data tidak dapat dipulihkan melalui aplikasi.</p>
+          </div>
+          <button type="button" disabled={busy === "reset"} onClick={() => setShowResetModal(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 disabled:opacity-40"><X size={18}/></button>
+        </div>
+        <div className="rounded-2xl border border-rose-200 bg-rose-50/70 p-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-rose-800">Data yang akan dihapus</p>
+          <p className="mt-2 text-sm leading-6 text-rose-900">Anggota, simpanan, pengajuan dan data pinjaman, angsuran, kas, jurnal, periode, impor Excel, snapshot pinjaman, ringkasan publik, serta riwayat audit.</p>
+        </div>
+        <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-sm font-semibold text-emerald-900">Yang tetap dipertahankan</p>
+          <p className="mt-1 text-xs leading-relaxed text-emerald-800">Akun Firebase Authentication, dokumen <code>admins</code>, konfigurasi proyek Firebase, dan aturan keamanan. Anda tetap dapat masuk sebagai administrator setelah reset.</p>
+        </div>
+        {resetError ? <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs leading-relaxed text-rose-800">{resetError}</div> : null}
+        <form onSubmit={resetAllData} className="mt-5 space-y-4">
+          <Field label='Ketik RESET SEMUA DATA untuk konfirmasi'>
+            <input className={inputClass} autoComplete="off" value={resetPhrase} onChange={e => setResetPhrase(e.target.value)} placeholder="RESET SEMUA DATA" required />
+          </Field>
+          <Field label="Password administrator saat ini">
+            <input className={inputClass} type="password" autoComplete="current-password" value={resetAdminPassword} onChange={e => setResetAdminPassword(e.target.value)} required />
+          </Field>
+          <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
+            <button type="button" className={buttonSecondary} disabled={busy === "reset"} onClick={() => setShowResetModal(false)}>Batal</button>
+            <button type="submit" disabled={busy === "reset" || resetPhrase !== "RESET SEMUA DATA" || !resetAdminPassword} className="inline-flex items-center justify-center gap-2 rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-50">
+              {busy === "reset" ? <Loader2 size={16} className="animate-spin"/> : <Trash2 size={16}/>}
+              {busy === "reset" ? "Menghapus data..." : "Hapus permanen"}
+            </button>
+          </div>
+        </form>
+        <p className="mt-4 text-[11px] leading-relaxed text-slate-400">Reset berjalan per kelompok maksimal 400 dokumen. Jika koneksi terputus, proses dapat dihentikan di tengah dan dijalankan kembali untuk menghapus sisa data.</p>
+      </div>
+    </div> : null}
 
     {showPassword && isAdmin ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm"><div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
       <div className="mb-6 flex items-start justify-between"><div><div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-800 text-white"><KeyRound size={20}/></div><h2 className="text-xl font-semibold">Ganti password administrator</h2><p className="mt-1 text-sm text-slate-500">Verifikasi password saat ini sebelum mengganti.</p></div><button onClick={()=>setShowPassword(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X size={18}/></button></div>
