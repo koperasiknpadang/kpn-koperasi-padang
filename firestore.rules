@@ -2,7 +2,6 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-
     function signedIn() {
       return request.auth != null;
     }
@@ -14,17 +13,17 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role in ['super_admin', 'admin'];
     }
 
-    function periodIsDraft(periodId) {
-      return getAfter(/databases/$(database)/documents/periods/$(periodId)).data.status == 'draft';
+    // Transactions may only be created in an open period. getAfter permits
+    // the period document to be created in the same atomic transaction.
+    function periodIsOpen(periodId) {
+      return getAfter(/databases/$(database)/documents/periods/$(periodId)).data.status == 'open';
     }
 
-    // Admin documents are provisioned only by the project owner through Firebase Console.
     match /admins/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;
       allow list, create, update, delete: if false;
     }
 
-    // Only explicitly published aggregate summaries are public.
     match /public_summaries/{summaryId} {
       allow read: if true;
       allow create, update: if isAdmin();
@@ -32,41 +31,71 @@ service cloud.firestore {
     }
 
     match /members/{memberId} {
-      allow read: if isAdmin();
-      allow create, update: if isAdmin();
+      allow read, create, update: if isAdmin();
       allow delete: if false;
     }
 
-    // Current convenience view; history is kept in loan_snapshots.
+    match /loan_applications/{applicationId} {
+      allow read, create, update: if isAdmin();
+      allow delete: if false;
+    }
+
     match /loans/{loanId} {
-      allow read: if isAdmin();
-      allow create, update: if isAdmin();
+      allow read, create, update: if isAdmin();
       allow delete: if false;
     }
 
-    match /loan_snapshots/{snapshotId} {
+    match /savings_transactions/{transactionId} {
       allow read: if isAdmin();
-      allow create: if isAdmin() && periodIsDraft(request.resource.data.periodId);
+      allow create: if isAdmin() && periodIsOpen(request.resource.data.periodId);
+      allow update, delete: if false;
+    }
+
+    match /installments/{installmentId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && periodIsOpen(request.resource.data.periodId);
+      allow update, delete: if false;
+    }
+
+    match /cash_transactions/{transactionId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && periodIsOpen(request.resource.data.periodId);
+      allow update, delete: if false;
+    }
+
+    match /journal_entries/{journalId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && periodIsOpen(request.resource.data.periodId);
       allow update, delete: if false;
     }
 
     match /periods/{periodId} {
       allow read: if isAdmin();
-      allow create: if isAdmin() && request.resource.data.status == 'draft';
+      allow create: if isAdmin()
+        && request.resource.data.status == 'open'
+        && request.resource.data.periodId == periodId;
       allow update: if isAdmin()
-        && resource.data.status == 'draft'
-        && request.resource.data.status in ['draft', 'published']
-        && request.resource.data.periodId == resource.data.periodId;
+        && resource.data.status == 'open'
+        && request.resource.data.status == 'closed'
+        && request.resource.data.periodId == resource.data.periodId
+        && request.resource.data.periodId == periodId;
       allow delete: if false;
     }
 
-    match /monthly_records/{recordId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && periodIsDraft(request.resource.data.periodId);
+    match /audit_logs/{logId} {
+      allow read, create: if isAdmin();
       allow update, delete: if false;
     }
 
-    match /audit_logs/{logId} {
+    // Legacy import collections remain readable for controlled migration,
+    // but are not used as the source of truth by the operational application.
+    match /loan_snapshots/{snapshotId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    match /monthly_records/{recordId} {
       allow read: if isAdmin();
       allow create: if isAdmin();
       allow update, delete: if false;
