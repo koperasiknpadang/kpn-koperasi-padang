@@ -82,7 +82,7 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
   for (const [sheetName, source] of sheets) {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) {
-      warnings.push("Sheet tidak ditemukan: " + sheetName);
+      warnings.push("STOP: Sheet wajib tidak ditemukan: " + sheetName);
       continue;
     }
 
@@ -120,8 +120,45 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
       rows.push(imported);
 
       if (imported.originalLoanAmount > 0 && imported.installmentTotal === 0) {
-        warnings.push("Periksa hasil formula pada " + sheetName + " baris " + (index + 1) + ".");
+        warnings.push("PERIKSA: Hasil formula angsuran nol pada " + sheetName + " baris " + (index + 1) + ".");
       }
+    }
+  }
+
+  const masterRows = rows.filter(row => row.source === "KOPERASI");
+  const lenderRows = rows.filter(row => row.source === "MANDIRI" || row.source === "BRI");
+  const masterNames = new Set(masterRows.map(row => row.normalizedName));
+  const lenderNames = new Set(lenderRows.map(row => row.normalizedName));
+
+  if (masterRows.length === 0) {
+    warnings.push("STOP: Sheet Pot. Koperasi tidak berisi baris anggota.");
+  }
+  if (masterNames.size !== lenderNames.size ||
+      [...masterNames].some(name => !lenderNames.has(name)) ||
+      [...lenderNames].some(name => !masterNames.has(name))) {
+    warnings.push("STOP: Daftar nama pada Pot. Koperasi tidak sama dengan gabungan MANDIRI dan BRI. Periksa daftar anggota sebelum impor.");
+  }
+
+  const reconcileFields: Array<[keyof ImportedRow, string]> = [
+    ["savingsPrincipal", "simpanan pokok"],
+    ["savingsMandatory", "simpanan wajib"],
+    ["savingsVoluntary", "simpanan sukarela"],
+    ["principalPaid", "angsuran pokok"],
+    ["interestPaid", "bunga"],
+    ["installmentTotal", "jumlah angsuran"],
+    ["totalDeduction", "total potongan"],
+    ["outstandingPrincipal", "sisa pinjaman"],
+    ["originalLoanAmount", "jumlah pinjaman"]
+  ];
+  for (const [field, label] of reconcileFields) {
+    const masterTotal = masterRows.reduce((sum, row) => sum + Number(row[field] || 0), 0);
+    const lenderTotal = lenderRows.reduce((sum, row) => sum + Number(row[field] || 0), 0);
+    if (Math.abs(masterTotal - lenderTotal) > 1) {
+      warnings.push(
+        "STOP: Rekonsiliasi " + label + " berbeda antara Pot. Koperasi (" +
+        Math.round(masterTotal).toLocaleString("id-ID") + ") dan MANDIRI + BRI (" +
+        Math.round(lenderTotal).toLocaleString("id-ID") + ")."
+      );
     }
   }
 
