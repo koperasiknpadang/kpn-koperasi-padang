@@ -25,6 +25,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Dependency security summary
+        run: |
+          npm audit --json > /tmp/npm-audit.json || true
+          node -e "const a=require('/tmp/npm-audit.json'); for (const [n,v] of Object.entries(a.vulnerabilities||{})) console.log(n+' | '+v.severity+' | '+v.range+' | fix='+JSON.stringify(v.fixAvailable))"
+
       - name: Build application
         run: npm run build
 
