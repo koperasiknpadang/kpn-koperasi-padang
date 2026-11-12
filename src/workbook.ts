@@ -125,6 +125,11 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
     }
 
     const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: true });
+    // Kolom P pada template menjadi parameter bunga per bulan. Nilai ini
+    // biasanya hanya diisi sekali (baris pertama), lalu dipakai formula baris lain.
+    const sheetInterestRate = matrix.slice(5)
+      .map(row => nullableNumber(row?.[15]))
+      .find(value => value !== null) ?? 0.01;
     const sheetPeriod = periodFromCell(matrix[1]?.[0]);
     if (!sheetPeriod) {
       warnings.push("STOP: Tanggal periode pada sel A2 sheet " + sheetName + " tidak terbaca.");
@@ -141,6 +146,15 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
       const name = typeof row[1] === "string" ? row[1].trim() : "";
       if (typeof serial !== "number" || !name) continue;
 
+      const originalLoanAmount = numberValue(row[11]);
+      const principalPaid = numberValue(row[5]);
+      const explicitTermMonths = nullableNumber(row[13]);
+      // Sebagian baris tidak mengulang tenor dan bunga karena Excel memakai
+      // referensi parameter di baris pertama. Jika tenor kosong, estimasi dari
+      // pokok awal / angsuran pokok hanya digunakan sebagai data bantu.
+      const inferredTermMonths = originalLoanAmount > 0 && principalPaid > 0
+        ? Math.round(originalLoanAmount / principalPaid)
+        : null;
       const imported: ImportedRow = {
         rowNumber: index + 1,
         source,
@@ -149,16 +163,16 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
         savingsPrincipal: numberValue(row[2]),
         savingsMandatory: numberValue(row[3]),
         savingsVoluntary: numberValue(row[4]),
-        principalPaid: numberValue(row[5]),
+        principalPaid,
         interestPaid: numberValue(row[6]),
         installmentTotal: numberValue(row[7]),
         installmentNumber: nullableNumber(row[8]),
         totalDeduction: numberValue(row[9]),
         outstandingPrincipal: numberValue(row[10]),
-        originalLoanAmount: numberValue(row[11]),
+        originalLoanAmount,
         note: typeof row[12] === "string" ? row[12].trim() : "",
-        termMonths: nullableNumber(row[13]),
-        interestRate: nullableNumber(row[15]),
+        termMonths: explicitTermMonths ?? inferredTermMonths,
+        interestRate: nullableNumber(row[15]) ?? (originalLoanAmount > 0 ? sheetInterestRate : null),
         nextCounter: nullableNumber(row[17]),
         nextMonthInstallmentNumber: nullableNumber(row[18])
       };
