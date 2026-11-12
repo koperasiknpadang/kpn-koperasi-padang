@@ -540,11 +540,12 @@ export default function FinancialApp() {
       }
 
       for (const row of bankRows) {
-        const memberId = memberIdFromNumber(row.memberNo);
+        const masterMember = masterRows.find(item => item.normalizedName === row.normalizedName);
+        const memberId = memberIdFromNumber(masterMember?.memberNo || row.memberNo);
         const member = memberById.get(memberId) || members.find(item =>
           normalizeMemberName(String(item.name || "")) === row.normalizedName
         );
-        if (!member && !masterRows.some(item => item.memberNo === row.memberNo)) {
+        if (!masterMember && !member) {
           throw new Error("Anggota " + row.memberName + " pada sheet " + row.source + " tidak ditemukan di Pot. Koperasi.");
         }
         const hasLoan = row.originalLoanAmount > 0 || row.outstandingPrincipal > 0 ||
@@ -588,6 +589,30 @@ export default function FinancialApp() {
           importedInstallments += 1;
         }
       }
+
+      const monthlyRecordId = stableId("monthly_record", preview.periodId);
+      batch.set(doc(db, "monthly_records", monthlyRecordId), {
+        periodId: preview.periodId, periodLabel: preview.periodLabel, importId,
+        sourceFile: fileName, sourceSheets: ["Pot. Koperasi", "MANDIRI", "BRI"],
+        masterRows: masterRows.map(row => ({
+          memberNo: row.memberNo, memberName: row.memberName, rowNumber: row.rowNumber,
+          savingsPrincipal: row.savingsPrincipal, savingsMandatory: row.savingsMandatory,
+          savingsVoluntary: row.savingsVoluntary, principalPaid: row.principalPaid,
+          interestPaid: row.interestPaid, installmentTotal: row.installmentTotal,
+          installmentNumber: row.installmentNumber, totalDeduction: row.totalDeduction,
+          outstandingPrincipal: row.outstandingPrincipal, originalLoanAmount: row.originalLoanAmount,
+          termMonths: row.termMonths, interestRate: row.interestRate, note: row.note
+        })),
+        bankRows: bankRows.map(row => ({
+          memberNo: row.memberNo, memberName: row.memberName, source: row.source,
+          principalPaid: row.principalPaid, interestPaid: row.interestPaid,
+          installmentTotal: row.installmentTotal, installmentNumber: row.installmentNumber,
+          outstandingPrincipal: row.outstandingPrincipal, originalLoanAmount: row.originalLoanAmount,
+          termMonths: row.termMonths, interestRate: row.interestRate, note: row.note
+        })),
+        importedAt: serverTimestamp(), importedBy: user?.uid || null
+      });
+      operationCount += 1;
 
       if (totalSavings > 0) {
         const cashId = stableId("cash", "workbook_savings_" + preview.periodId);
@@ -967,6 +992,8 @@ export default function FinancialApp() {
     sum + (item.type === "income" ? Number(item.amount || 0) : -Number(item.amount || 0)), 0), [cashTransactions]);
   const outstandingLoans = useMemo(() => loans.filter(item => item.status === "active")
     .reduce((sum, item) => sum + Number(item.outstandingPrincipal || 0), 0), [loans]);
+  const outstandingCoopLoans = useMemo(() => loans.filter(item => item.status === "active" && item.source === "KOPERASI")
+    .reduce((sum, item) => sum + Number(item.outstandingPrincipal || 0), 0), [loans]);
   const totalLoanInterest = useMemo(() => installments.filter(item => item.source === "KOPERASI").reduce((sum, item) => sum + Number(item.interestPaid || 0), 0), [installments]);
   const activeMembers = members.filter(member => member.active !== false);
   const latestPeriod = periods[0] || null;
@@ -1311,7 +1338,7 @@ export default function FinancialApp() {
           <Card><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold">Laporan keuangan</h2><p className="mt-1 text-xs text-slate-500">Ringkasan dihitung dari transaksi dan jurnal yang tersimpan.</p></div><Field label="Filter periode"><select className={inputClass+" min-w-48"} value={reportPeriod} onChange={e=>setReportPeriod(e.target.value)}><option value="all">Semua periode</option>{periods.map(p=><option key={p.id} value={p.id}>{p.periodLabel||p.id}</option>)}</select></Field></div></Card>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Stat label="Simpanan anggota" value={money(totalSavings)} note="Saldo saat ini" icon={Wallet}/>
-            <Stat label="Sisa piutang pinjaman" value={money(outstandingLoans)} note="Pinjaman aktif" icon={Landmark} tone="blue"/>
+            <Stat label="Sisa piutang pinjaman KPN" value={money(outstandingCoopLoans)} note="Hanya pinjaman dari dana koperasi" icon={Landmark} tone="blue"/>
             <Stat label="Bunga pinjaman diterima" value={money(filteredInstallments.filter(t=>t.source==="KOPERASI").reduce((s,t)=>s+Number(t.interestPaid||0),0))} note="Periode terpilih" icon={TrendingUp}/>
             <Stat label="SHU sementara" value={money(netSurplus)} note="Pendapatan dikurangi beban" icon={BarChart3} tone="amber"/>
           </div>
