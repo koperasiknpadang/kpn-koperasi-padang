@@ -155,13 +155,25 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
     // produced by desktop/mobile office apps contain ZIP metadata that causes
     // browser readers to report "Bad compressed size" even though the XML files
     // are intact. Repacking preserves every workbook entry and its cell values.
+    let entries: Record<string, Uint8Array>;
     try {
-      const entries = unzipSync(bytes);
-      const normalizedArchive = zipSync(entries, { level: 6 });
+      entries = unzipSync(bytes);
+    } catch (error) {
+      throw new Error("ZIP_EXTRACT_FAILED: Arsip Excel tidak dapat diekstrak di browser. " +
+        (error instanceof Error ? error.message : String(error)));
+    }
+    if (!entries["[Content_Types].xml"] || !entries["xl/workbook.xml"]) {
+      throw new Error("XLSX_STRUCTURE_INVALID: Struktur workbook Excel tidak lengkap.");
+    }
+    try {
+      // Use ZIP STORE (no deflate) for the normalized archive. This avoids
+      // browser decompressor edge cases with data descriptors / compressed-size
+      // metadata found in some mobile Office-generated workbooks.
+      const normalizedArchive = zipSync(entries, { level: 0 });
       workbook = XLSX.read(normalizedArchive, { type: "array", cellDates: true });
-    } catch (normalizationError) {
-      // Keep a compatibility fallback for unusual but valid OOXML containers.
-      workbook = XLSX.read(bytes, { type: "array", cellDates: true });
+    } catch (error) {
+      throw new Error("XLSX_PARSE_FAILED: Arsip berhasil diekstrak, tetapi SheetJS gagal membaca workbook hasil normalisasi. " +
+        (error instanceof Error ? error.message : String(error)));
     }
   }
   const sheets: Array<[string, SourceName]> = [
