@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import XlsxPopulate from "@xlsx/xlsx-populate";
+import * as XlsxPopulateModule from "@xlsx/xlsx-populate";
 
 export type SourceName = "KOPERASI" | "MANDIRI" | "BRI";
 
@@ -120,7 +120,7 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
     try {
       // Decrypt the password-protected XLSX locally in the browser. The original
       // file is never uploaded and the password is never persisted.
-      const browserReader = XlsxPopulate as unknown as {
+      const browserReader = XlsxPopulateModule as unknown as {
         fromData: (data: ArrayBuffer, options: { password: string }) => Promise<{
           output: (options: { type: "arraybuffer" }) => Promise<ArrayBuffer>;
         }>;
