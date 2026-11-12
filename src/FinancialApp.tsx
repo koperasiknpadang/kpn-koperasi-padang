@@ -577,7 +577,7 @@ export default function FinancialApp() {
         operationCount += 1;
         totalLoanRows += 1;
         if (row.installmentTotal > 0) {
-          const installmentId = stableId("installment", loanId + "_" + preview.periodId);
+          const installmentId = loanId + "__" + preview.periodId;
           batch.set(doc(db, "installments", installmentId), {
             loanId, memberId: resolvedMemberId, memberName: row.memberName, source: row.source,
             kind: "regular", periodId: preview.periodId, date: periodDate,
