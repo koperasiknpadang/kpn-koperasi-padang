@@ -1,120 +1,91 @@
-# Panduan Aktivasi dan Deploy KPN Koperasi
+# Panduan aktivasi Google Cloud OIDC untuk Firebase Hosting
 
-Panduan ini ditujukan untuk menyelesaikan konfigurasi dari browser. Tidak perlu mengedit source code atau menggunakan VS Code.
+Panduan ini menggunakan Workload Identity Federation (OIDC). GitHub Actions memperoleh kredensial sementara dari Google Cloud; tidak ada file JSON service-account key yang disimpan di GitHub.
 
-## Data proyek
-- GitHub: https://github.com/koperasiknpadang/kpn-koperasi-padang
-- Firebase project ID: `koperasi-kn-padang`
-- Firebase Hosting default domain setelah site dibuat: `https://koperasi-kn-padang.web.app`
-- Email administrator yang dipakai: `koperasiknpadang@gmail.com`
+## Identitas proyek
+- GitHub repository: `koperasiknpadang/kpn-koperasi-padang`
+- Firebase / Google Cloud project ID: `koperasi-kn-padang`
+- Firebase Hosting target: default site proyek
 
-## A. Aktifkan Firebase Authentication
-1. Buka https://console.firebase.google.com/
-2. Pilih project `koperasi-kn-padang`.
-3. Buka Build → Authentication → Get started.
-4. Buka tab Sign-in method.
-5. Aktifkan Email/Password dan simpan.
-6. Buka tab Users dan pastikan akun administrator yang dibuat sebelumnya ada. Catat UID akun tersebut; UID harus cocok dengan Document ID pada `admins`.
+## 1. Pastikan Firebase Hosting aktif
+1. Buka Firebase Console: https://console.firebase.google.com/project/koperasi-kn-padang/hosting
+2. Jika diminta, klik Get started dan selesaikan aktivasi Hosting.
+3. Pastikan Hosting site default sudah tersedia.
 
-## B. Pastikan dokumen Super Admin
-Di Build → Firestore Database → Data, pastikan dokumen berikut sudah ada:
-- Collection: `admins`
-- Document ID: UID akun administrator dari Authentication
-- Field `role`: string `super_admin`
-- Field `active`: boolean `true`
+## 2. Buat service account khusus deploy
+1. Buka Google Cloud Service Accounts: https://console.cloud.google.com/iam-admin/serviceaccounts?project=koperasi-kn-padang
+2. Pastikan project yang aktif adalah `koperasi-kn-padang`.
+3. Klik Create service account.
+4. Nama: `github-hosting-deployer`.
+5. Berikan role **Firebase Hosting Admin** (`roles/firebasehosting.admin`).
+6. Selesaikan pembuatan. Salin alamat email service account yang berakhiran `.iam.gserviceaccount.com`; alamat ini bukan password atau private key.
 
-Jangan membuat dokumen admin dengan Auto-ID. Jangan mengirim password atau private key ke siapa pun.
+Jangan membuat atau mengunduh JSON key. Service account ini hanya untuk deployment Hosting dan tidak boleh diberi Owner/Editor.
 
-## C. Terapkan Firestore Security Rules
-1. Buka https://console.firebase.google.com/project/koperasi-kn-padang/firestore
-2. Pilih tab Rules.
-3. Buka file `firestore.rules` di repository GitHub ini.
-4. Salin seluruh isi file tersebut.
-5. Ganti isi editor Rules di Firebase Console dengan isi file dari repository.
-6. Klik Publish.
+## 3. Aktifkan Workload Identity Federation
+1. Buka Workload Identity Pools: https://console.cloud.google.com/iam-admin/workload-identity-pools?project=koperasi-kn-padang
+2. Pilih project `koperasi-kn-padang` dan klik Create pool.
+3. Pool name: `github-actions-pool`. Pool ID: `github-actions-pool`.
+4. Pada provider, pilih OpenID Connect (OIDC).
+5. Provider name: `github-actions-provider`. Provider ID: `github-actions-provider`.
+6. Issuer URL: `https://token.actions.githubusercontent.com`.
+7. Audience: pilih Default audience.
+8. Attribute mapping:
+   - `google.subject` = `assertion.sub`
+   - `attribute.repository` = `assertion.repository`
+9. Attribute condition (batasi hanya repository ini):
+   `assertion.repository == 'koperasiknpadang/kpn-koperasi-padang'`
+10. Simpan provider.
 
-Aturan tersebut:
-- Membolehkan publik membaca hanya `public_summaries`.
-- Menutup data anggota, pinjaman, periode, dan transaksi dari publik.
-- Memeriksa dokumen admin aktif berdasarkan UID.
-- Membuat snapshot bulanan tidak dapat diubah setelah disimpan.
-- Mengunci periode setelah statusnya `published`.
+Jika Console menampilkan pilihan membuat pool dan provider dalam satu wizard, gunakan nilai yang sama di atas.
 
-Jangan gunakan aturan `allow read, write: if true` di database produksi.
+## 4. Izinkan repository memakai service account
+Di detail service account `github-hosting-deployer`:
+1. Buka tab Permissions / Grant access (atau Manage access).
+2. Tambahkan principal dari Workload Identity Pool dengan format:
+   `principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github-actions-pool/attribute.repository/koperasiknpadang/kpn-koperasi-padang`
+3. Ganti `PROJECT_NUMBER` dengan **Project number** numerik Google Cloud, bukan project ID.
+4. Berikan role **Workload Identity User** (`roles/iam.workloadIdentityUser`).
+5. Simpan.
 
-## D. Aktifkan Firebase Hosting
-1. Buka Firebase Console project `koperasi-kn-padang`.
-2. Pilih Build → Hosting.
-3. Jika belum diaktifkan, klik Get started dan selesaikan pembuatan Hosting site.
-4. Pastikan default site tersedia.
+Project number dapat dilihat di Google Cloud Console → Home / Project settings. Jangan menebaknya.
 
-## E. Buat kredensial deployment khusus
-Jangan memakai file Service Account Admin SDK yang terlalu luas jika tidak diperlukan. Buat service account khusus untuk GitHub Actions:
+## 5. Salin provider resource name
+Buka Workload Identity Pools → `github-actions-pool` → provider `github-actions-provider`. Salin **Provider resource name** lengkap. Bentuknya:
+`projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider`
 
-1. Buka Google Cloud Console → IAM & Admin → Service Accounts:
-   https://console.cloud.google.com/iam-admin/serviceaccounts?project=koperasi-kn-padang
-2. Klik Create service account.
-3. Nama contoh: `github-hosting-deployer`.
-4. Berikan peran:
-   - Firebase Hosting Admin (`roles/firebasehosting.admin`)
-   - API Keys Viewer (`roles/serviceusage.apiKeysViewer`) bila diperlukan untuk deployment melalui CLI.
-5. Selesaikan pembuatan service account.
-6. Buka service account tersebut → Keys → Add key → Create new key → JSON.
-7. Unduh file JSON. File ini bersifat rahasia.
+Pastikan menggunakan project number numerik pada bagian awal.
 
-## F. Simpan JSON sebagai GitHub Secret
-1. Buka https://github.com/koperasiknpadang/kpn-koperasi-padang
-2. Pilih Settings → Secrets and variables → Actions.
-3. Klik New repository secret.
-4. Isi Name persis:
-   `FIREBASE_SERVICE_ACCOUNT_KOPERASI_KN_PADANG`
-5. Buka file JSON service account yang diunduh, salin seluruh isinya, dan tempel ke Secret value.
-6. Klik Add secret.
-7. Hapus file JSON dari folder Downloads setelah memastikan secret tersimpan. Jangan pernah menaruh file JSON di repository, membagikannya lewat chat, atau mengunggahnya ke tempat publik.
+## 6. Tambahkan dua GitHub Actions variables
+1. Buka https://github.com/koperasiknpadang/kpn-koperasi-padang/settings/variables/actions
+2. Klik New repository variable dan buat:
+   - Name: `GCP_WORKLOAD_IDENTITY_PROVIDER`
+   - Value: Provider resource name lengkap dari langkah 5.
+3. Buat variable kedua:
+   - Name: `GCP_SERVICE_ACCOUNT`
+   - Value: alamat email service account `github-hosting-deployer` dari langkah 2.
+4. Simpan keduanya.
 
-## G. Jalankan deployment
-Workflow sudah tersedia di:
-`.github/workflows/firebase-hosting.yml`
+Ini adalah Variables, bukan Secrets. Tidak ada kredensial rahasia jangka panjang yang disimpan.
 
-Workflow akan:
-1. Menginstal dependensi.
-2. Menjalankan pemeriksaan TypeScript dan build Vite.
-3. Jika secret sudah tersedia, deploy ke Firebase Hosting live.
-4. Jika secret belum tersedia, deployment dilewati dan hasil build tetap dapat diperiksa.
+## 7. Jalankan deploy
+Workflow `.github/workflows/firebase-hosting.yml` sudah diperbarui agar:
+- menjalankan build terlebih dahulu;
+- meminta token OIDC hanya pada job deployment;
+- memakai provider dan service account dari dua repository variables;
+- menjalankan Firebase CLI untuk deploy Hosting saja, bukan Firestore Rules;
+- melewati deploy jika variabel belum diisi.
 
-Buka tab Actions di GitHub:
-https://github.com/koperasiknpadang/kpn-koperasi-padang/actions
+Buka tab Actions: https://github.com/koperasiknpadang/kpn-koperasi-padang/actions
+Setelah dua variables disimpan, jalankan ulang workflow terakhir (Re-run all jobs), atau buat commit baru ke branch `main`.
 
-Setelah secret disimpan, pilih workflow terbaru dan klik Re-run all jobs bila tidak ada push baru. Pastikan job berstatus sukses. Setelah deployment sukses, buka:
-`https://koperasi-kn-padang.web.app`
+Jika gagal, buka detail job dan salin pesan error (hapus informasi sensitif bila ada) untuk diperiksa. Jangan pernah mengirim token, private key, atau file kredensial.
 
-## H. Masuk dan impor workbook
-1. Buka website Hosting.
-2. Klik Masuk Pengelola.
-3. Masuk dengan akun Firebase Authentication administrator. Password hanya dimasukkan pada form login website, tidak disimpan di GitHub.
-4. Buka menu Impor Excel.
-5. Pilih workbook dari komputer. File asli dibaca di browser; file Excel tidak diunggah ke GitHub.
-6. Periksa periode dan pratinjau. Workbook KPN menggunakan sheet:
-   - `Pot. Koperasi`: rekap konsolidasi potongan/simpanan bulanan.
-   - `MANDIRI`: rincian pinjaman Mandiri.
-   - `BRI`: rincian pinjaman BRI.
-7. Importer memeriksa kesesuaian nama dan rekonsiliasi nilai antara sheet konsolidasi dan rincian bank. Jika ada peringatan `STOP:`, tombol simpan akan dinonaktifkan sampai workbook diperbaiki.
-8. Sebelum mengimpor, buka workbook di Excel, tekan Ctrl+Alt+F9, lalu Save agar hasil formula terbaru tersimpan.
-9. Klik Simpan sebagai draft. Periksa data anggota, pinjaman, total potongan, dan sisa pinjaman.
-10. Setelah diverifikasi, buka menu Periode dan klik Publikasikan ringkasan. Hanya angka agregat yang dipublikasikan.
+Setelah job deploy sukses, uji:
+https://koperasi-kn-padang.web.app
 
-## I. Proses bulan berikutnya
-1. Buat salinan workbook bulan sebelumnya; jangan menimpa file arsip bulan sebelumnya.
-2. Perbarui tanggal periode pada sel A2 sesuai bulan baru.
-3. Periksa baris anggota dan sumber pinjaman; jangan menaikkan nomor angsuran secara otomatis tanpa memastikan pembayaran benar-benar terjadi.
-4. Tekan Ctrl+Alt+F9, Save, lalu unggah workbook baru melalui menu Impor Excel.
-5. Setiap periode memiliki ID `YYYY-MM`. Periode yang sudah ada tidak dapat diimpor ulang dengan ID yang sama.
-6. Periode yang telah dipublikasikan dan snapshot transaksi disimpan sebagai arsip dan dikunci oleh Security Rules.
-
-## J. Batasan versi awal
-Versi awal ini sudah menyediakan dashboard publik agregat, login pengelola, daftar anggota, daftar pinjaman, daftar periode, impor Excel dengan pratinjau/rekonsiliasi, dan publikasi ringkasan. Fitur pengubahan transaksi satu per satu, pembuatan pinjaman manual, ekspor laporan khusus, dan kalkulasi bunga/angsuran otomatis belum diaktifkan. Nilai formula mengikuti hasil workbook yang telah disimpan dan harus diverifikasi pengelola.
-
-## Keamanan
-- Repository ini bersifat publik: jangan masukkan data anggota, nominal perorangan, workbook asli, password, token, atau file JSON service account.
-- Firebase Web config yang dipakai aplikasi adalah konfigurasi client. Keamanan data tetap bergantung pada Firebase Authentication dan Firestore Security Rules.
-- Jika ada kesalahan akses, periksa tab Firestore Rules dan GitHub Actions; jangan melonggarkan aturan menjadi akses publik.
+## Catatan keamanan
+- Jangan memberikan role Owner atau Editor kepada service account deploy.
+- Jangan menyimpan file JSON service account di repository, GitHub Variables, chat, atau folder publik.
+- Workflow ini hanya menjalankan deployment dari branch `main`. Jangan mengubahnya agar deploy dari pull request/fork.
+- Pastikan Firestore Security Rules sudah dipublikasikan secara terpisah sebelum mengimpor data asli.
