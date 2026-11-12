@@ -15,7 +15,8 @@
     "react-dom": "^19.1.0",
     "recharts": "^2.15.4",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
-    "@xlsx/xlsx-populate": "^0.1.1"
+    "@xlsx/xlsx-populate": "^0.1.1",
+    "fflate": "^0.8.2"
   },
   "overrides": {
     "@grpc/grpc-js": "^1.14.5"
