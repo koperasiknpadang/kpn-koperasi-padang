@@ -13,6 +13,13 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role in ['super_admin', 'admin'];
     }
 
+    function isSuperAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'super_admin';
+    }
+
     // Transactions may only be created in an open period. getAfter permits
     // the period document to be created in the same atomic transaction.
     function periodIsOpen(periodId) {
@@ -27,46 +34,50 @@ service cloud.firestore {
     match /public_summaries/{summaryId} {
       allow read: if true;
       allow create, update: if isAdmin();
-      allow delete: if false;
+      allow delete: if isSuperAdmin();
     }
 
     match /members/{memberId} {
       allow read, create, update: if isAdmin();
-      allow delete: if false;
+      allow delete: if isSuperAdmin();
     }
 
     match /loan_applications/{applicationId} {
       allow read, create, update: if isAdmin();
-      allow delete: if false;
+      allow delete: if isSuperAdmin();
     }
 
     match /loans/{loanId} {
       allow read, create, update: if isAdmin();
-      allow delete: if false;
+      allow delete: if isSuperAdmin();
     }
 
     match /savings_transactions/{transactionId} {
       allow read: if isAdmin();
       allow create: if isAdmin() && periodIsOpen(request.resource.data.periodId);
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isSuperAdmin();
     }
 
     match /installments/{installmentId} {
       allow read: if isAdmin();
       allow create: if isAdmin() && periodIsOpen(request.resource.data.periodId);
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isSuperAdmin();
     }
 
     match /cash_transactions/{transactionId} {
       allow read: if isAdmin();
       allow create: if isAdmin() && periodIsOpen(request.resource.data.periodId);
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isSuperAdmin();
     }
 
     match /journal_entries/{journalId} {
       allow read: if isAdmin();
       allow create: if isAdmin() && periodIsOpen(request.resource.data.periodId);
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isSuperAdmin();
     }
 
     match /periods/{periodId} {
@@ -79,12 +90,13 @@ service cloud.firestore {
         && request.resource.data.status == 'closed'
         && request.resource.data.periodId == resource.data.periodId
         && request.resource.data.periodId == periodId;
-      allow delete: if false;
+      allow delete: if isSuperAdmin();
     }
 
     match /audit_logs/{logId} {
       allow read, create: if isAdmin();
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isSuperAdmin();
     }
 
     // Legacy import collections remain readable for controlled migration,
@@ -92,13 +104,15 @@ service cloud.firestore {
     match /loan_snapshots/{snapshotId} {
       allow read: if isAdmin();
       allow create: if isAdmin();
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isSuperAdmin();
     }
 
     match /monthly_records/{recordId} {
       allow read: if isAdmin();
       allow create: if isAdmin();
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isSuperAdmin();
     }
 
     match /{document=**} {
