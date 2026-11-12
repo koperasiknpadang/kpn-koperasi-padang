@@ -57,8 +57,10 @@ function periodFromCell(value: unknown): string | null {
   let month: number | null = null;
 
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    year = value.getUTCFullYear();
-    month = value.getUTCMonth() + 1;
+    // Excel date cells are represented as local Date objects by SheetJS.
+    // Read the local calendar components so WIB does not shift 1 November to 31 October.
+    year = value.getFullYear();
+    month = value.getMonth() + 1;
   } else if (typeof value === "number") {
     const parsed = XLSX.SSF.parse_date_code(value);
     if (parsed && parsed.y >= 2000 && parsed.m >= 1 && parsed.m <= 12) {
