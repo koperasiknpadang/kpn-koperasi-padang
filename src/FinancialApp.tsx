@@ -145,6 +145,7 @@ export default function FinancialApp() {
   const [periods, setPeriods] = useState<Row[]>([]);
 
   const [editingMemberId, setEditingMemberId] = useState("");
+  const [selectedMemberId, setSelectedMemberId] = useState("");
   const [memberForm, setMemberForm] = useState({ memberNo: "", name: "", phone: "", joinDate: todayWib() });
   const [savingForm, setSavingForm] = useState({
     memberId: "", type: "mandatory" as SavingType, direction: "deposit" as Direction,
@@ -755,8 +756,32 @@ export default function FinancialApp() {
             </form>
           </Card>
           <Card><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Daftar anggota</h2><p className="text-xs text-slate-500">{fmtNumber(members.length)} anggota terdaftar</p></div><div className="relative w-full sm:w-72"><Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input className="w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-emerald-600" value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nomor, nama, telepon..." /></div></div>
-            {filteredMembers.length ? <div className="overflow-x-auto"><table className="w-full min-w-[780px] text-left text-sm"><thead><tr className="border-b border-slate-100 text-xs text-slate-400"><th className="py-3">No. anggota</th><th>Nama anggota</th><th>Telepon</th><th>Simpanan</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{filteredMembers.map(m => <tr key={m.id} className="border-b border-slate-50"><td className="py-3">{m.memberNo}</td><td className="font-medium text-slate-800">{m.name}</td><td>{m.phone || "—"}</td><td>{money(Object.values({...zeroBalances,...(m.savingsBalances||{})}).reduce((s:any,v:any)=>s+Number(v||0),0))}</td><td><Status value={m.active === false ? "inactive" : "active"} /></td><td><div className="flex gap-2"><button className="text-xs font-semibold text-emerald-800 hover:underline" onClick={() => {setEditingMemberId(m.id);setMemberForm({memberNo:m.memberNo||"",name:m.name||"",phone:m.phone||"",joinDate:m.joinDate||todayWib()});window.scrollTo({top:0,behavior:"smooth"});}}>Edit</button><button className="text-xs font-semibold text-slate-500 hover:underline" onClick={() => void toggleMember(m)}>{m.active === false ? "Aktifkan" : "Nonaktifkan"}</button></div></td></tr>)}</tbody></table></div> : <Empty title="Belum ada anggota" detail="Tambahkan anggota melalui formulir di atas." />}
+            {filteredMembers.length ? <div className="overflow-x-auto"><table className="w-full min-w-[780px] text-left text-sm"><thead><tr className="border-b border-slate-100 text-xs text-slate-400"><th className="py-3">No. anggota</th><th>Nama anggota</th><th>Telepon</th><th>Simpanan</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{filteredMembers.map(m => <tr key={m.id} className="border-b border-slate-50"><td className="py-3">{m.memberNo}</td><td className="font-medium text-slate-800">{m.name}</td><td>{m.phone || "—"}</td><td>{money(Object.values({...zeroBalances,...(m.savingsBalances||{})}).reduce((s:any,v:any)=>s+Number(v||0),0))}</td><td><Status value={m.active === false ? "inactive" : "active"} /></td><td><div className="flex gap-2"><button className="text-xs font-semibold text-emerald-800 hover:underline" onClick={() => setSelectedMemberId(m.id)}>Riwayat</button><button className="text-xs font-semibold text-emerald-800 hover:underline" onClick={() => {setEditingMemberId(m.id);setMemberForm({memberNo:m.memberNo||"",name:m.name||"",phone:m.phone||"",joinDate:m.joinDate||todayWib()});window.scrollTo({top:0,behavior:"smooth"});}}>Edit</button><button className="text-xs font-semibold text-slate-500 hover:underline" onClick={() => void toggleMember(m)}>{m.active === false ? "Aktifkan" : "Nonaktifkan"}</button></div></td></tr>)}</tbody></table></div> : <Empty title="Belum ada anggota" detail="Tambahkan anggota melalui formulir di atas." />}
           </Card>
+          {selectedMemberId ? (() => {
+            const selected = members.find(item => item.id === selectedMemberId);
+            if (!selected) return null;
+            const memberSavings = savingsTransactions.filter(item => item.memberId === selectedMemberId);
+            const memberLoans = loans.filter(item => item.memberId === selectedMemberId);
+            const memberPayments = installments.filter(item => item.memberId === selectedMemberId);
+            return <Card>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div><p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">Profil dan riwayat anggota</p><h2 className="mt-1 text-lg font-semibold">{selected.name}</h2><p className="text-xs text-slate-500">No. {selected.memberNo} · Bergabung {dateLabel(selected.joinDate || "")}</p></div>
+                <button className={buttonSecondary} onClick={() => setSelectedMemberId("")}><X size={15}/>Tutup</button>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Simpanan pokok</p><p className="mt-1 font-bold">{money(selected.savingsBalances?.principal)}</p></div>
+                <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Simpanan wajib</p><p className="mt-1 font-bold">{money(selected.savingsBalances?.mandatory)}</p></div>
+                <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Simpanan sukarela</p><p className="mt-1 font-bold">{money(selected.savingsBalances?.voluntary)}</p></div>
+              </div>
+              <h3 className="mt-5 font-semibold">Pinjaman anggota</h3>
+              {memberLoans.length ? <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[580px] text-left text-sm"><thead><tr className="border-b text-xs text-slate-400"><th className="py-2">Sumber</th><th>Pokok awal</th><th>Sisa pokok</th><th>Status</th></tr></thead><tbody>{memberLoans.map(item=><tr key={item.id} className="border-b border-slate-50"><td className="py-2">{item.source}</td><td>{money(item.principal)}</td><td>{money(item.outstandingPrincipal)}</td><td><Status value={item.status}/></td></tr>)}</tbody></table></div> : <p className="mt-2 text-sm text-slate-500">Belum ada pinjaman.</p>}
+              <h3 className="mt-5 font-semibold">Riwayat pembayaran</h3>
+              {memberPayments.length ? <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[580px] text-left text-sm"><thead><tr className="border-b text-xs text-slate-400"><th className="py-2">Tanggal</th><th>Jenis</th><th>Pokok</th><th>Bunga</th><th>Total</th></tr></thead><tbody>{memberPayments.map(item=><tr key={item.id} className="border-b border-slate-50"><td className="py-2">{dateLabel(item.date)}</td><td>{item.kind==="payoff"?"Pelunasan":"Angsuran ke-"+item.installmentNumber}</td><td>{money(item.principalPaid)}</td><td>{money(item.interestPaid)}</td><td>{money(item.totalPaid)}</td></tr>)}</tbody></table></div> : <p className="mt-2 text-sm text-slate-500">Belum ada pembayaran pinjaman.</p>}
+              <h3 className="mt-5 font-semibold">Riwayat simpanan</h3>
+              {memberSavings.length ? <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[580px] text-left text-sm"><thead><tr className="border-b text-xs text-slate-400"><th className="py-2">Tanggal</th><th>Jenis</th><th>Arah</th><th>Nominal</th></tr></thead><tbody>{memberSavings.map(item=><tr key={item.id} className="border-b border-slate-50"><td className="py-2">{dateLabel(item.date)}</td><td>{item.type}</td><td>{item.direction==="deposit"?"Setoran":"Penarikan"}</td><td>{money(item.amount)}</td></tr>)}</tbody></table></div> : <p className="mt-2 text-sm text-slate-500">Belum ada transaksi simpanan.</p>}
+            </Card>;
+          })() : null}
         </div> : null}
 
         {tab === "savings" ? <div className="space-y-4">
