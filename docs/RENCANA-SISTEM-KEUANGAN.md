@@ -90,3 +90,35 @@ Aplikasi menjadi sistem operasional keuangan koperasi. Excel hanya dipakai untuk
 ## Catatan kondisi aplikasi saat ini
 
 Implementasi saat ini masih berpusat pada impor workbook bulanan ke koleksi `monthly_records`, `loan_snapshots`, dan `periods`. Tampilan anggota masih berupa daftar baca-saja. Model ini belum cukup untuk menjadi buku besar transaksi operasional. Pengembangan berikutnya harus membangun transaksi sebagai sumber data utama dan menyediakan migrasi yang aman dari data impor lama.
+
+
+## Aturan bisnis yang harus diterapkan pada rekap
+
+### Periode A2 dan nomor cicilan
+
+- Sel A2 pada ketiga sheet adalah tanggal acuan periode. Contoh `01/11/2026` berarti periode **November 2026**, bukan periode tanggal harian.
+- ID periode disimpan dalam format `YYYY-MM` (contoh `2026-11`) agar urutan bulan konsisten.
+- Kolom **Ke** adalah urutan angsuran pinjaman anggota. Jika periode sebelumnya tercatat Ke-2 dan pinjaman masih aktif pada periode berikutnya, sistem menyiapkan Ke-3. Nomor tidak boleh bertambah dua kali akibat impor ulang atau refresh.
+- Kenaikan nomor hanya terjadi pada periode bulanan baru ketika angsuran benar-benar jatuh tempo/dibukukan. Periode yang sama tidak boleh menaikkan nomor lagi.
+- Jika sisa pokok menjadi nol setelah pelunasan, status pinjaman menjadi **Lunas** dan tidak dibuatkan angsuran berikutnya. Pelunasan dipercepat dicatat sebagai transaksi tersendiri dengan tanggal, jumlah pokok, bunga yang disepakati, dan referensi.
+- Jika anggota keluar/berhenti, status anggota menjadi **Nonaktif**. Riwayat simpanan, pinjaman, angsuran, dan kewajiban tetap disimpan; status nonaktif tidak otomatis menghapus atau menghapuskan utang.
+- Anggota baru dibuat sebagai data anggota baru dengan tanggal mulai/bergabung dan status aktif. Anggota baru tidak boleh ditambahkan ke periode sebelum tanggal bergabung tanpa koreksi yang diaudit.
+- Rekap harus memperlihatkan status anggota (Aktif/Nonaktif/Baru), status pinjaman (Aktif/Lunas), bank/sumber pinjaman, nomor Ke, angsuran pokok, bunga, total angsuran, sisa pokok, serta catatan perubahan pada periode berjalan.
+
+### Bunga pinjaman
+
+- Ketentuan yang disampaikan pengelola: **bunga 1%**.
+- Angka 1% dicatat sebagai ketentuan yang perlu dikonfirmasi metode hitungnya sebelum diterapkan pada perhitungan otomatis. Jangan menganggap sendiri apakah 1% per bulan, per tahun, dari pokok awal, atau dari sisa pokok.
+- Sebelum modul pinjaman diaktifkan, pengelola harus mengonfirmasi dasar pengenaan bunga, periode hitung, pembulatan, dan perlakuan bunga pada pelunasan dipercepat.
+- Nilai bunga hasil impor tetap dipertahankan sebagai data historis; sistem tidak boleh menghitung ulang dan mengubah data historis tanpa proses rekonsiliasi.
+
+### Bentuk rekap yang mudah dipahami
+
+Rekap bulanan dirancang dengan bagian:
+1. **Ringkasan anggota:** anggota awal, anggota baru, anggota nonaktif/keluar, dan anggota aktif akhir periode.
+2. **Simpanan:** saldo awal, setoran per jenis, penarikan/koreksi yang disetujui, dan saldo akhir.
+3. **Pinjaman per anggota:** sumber pinjaman, pokok awal, Ke saat ini, pokok dibayar, bunga, total angsuran, sisa pokok, dan status.
+4. **Perubahan periode:** pinjaman baru dicairkan, angsuran rutin, pelunasan dipercepat, anggota masuk/keluar, dan koreksi.
+5. **Kontrol total:** jumlah data anggota, jumlah pinjaman aktif/lunas, total potongan, total bunga, dan rekonsiliasi terhadap sheet utama Pot. Koperasi.
+
+Tampilan rekap menggunakan istilah sehari-hari dan menjelaskan bahwa sheet Pot. Koperasi merupakan poros/konsolidasi, sedangkan MANDIRI dan BRI hanya rincian sumber pinjaman. Nilai pinjaman tidak boleh dijumlahkan dua kali.
