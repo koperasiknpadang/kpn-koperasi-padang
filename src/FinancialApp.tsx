@@ -179,7 +179,7 @@ export default function FinancialApp() {
         "installments", "cash_transactions", "journal_entries", "periods"
       ];
       const snaps = await Promise.all(names.map(name => getDocs(collection(db, name))));
-      const rows = snaps.map(snap => snap.docs.map(item => ({ id: item.id, ...item.data() })));
+      const rows: Row[][] = snaps.map(snap => snap.docs.map(item => ({ id: item.id, ...item.data() } as Row)));
       setMembers(rows[0].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "id")));
       setSavingsTransactions(rows[1].sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))));
       setApplications(rows[2].sort((a, b) => String(b.createdAt?.seconds || 0).localeCompare(String(a.createdAt?.seconds || 0))));
@@ -321,7 +321,7 @@ export default function FinancialApp() {
         if (!memberSnap.exists()) throw new Error("Anggota tidak ditemukan.");
         const member = memberSnap.data();
         if (savingForm.direction === "deposit" && member.active === false) throw new Error("Anggota nonaktif tidak dapat menerima setoran baru.");
-        if (periodSnap.exists() && periodSnap.data().status === "closed") throw new Error("Periode " + periodLabel(periodId) + " sudah ditutup.");
+        if (periodSnap.exists() && periodSnap.data().status !== "open") throw new Error("Periode " + periodLabel(periodId) + " tidak terbuka atau sudah ditutup.");
         const balances = { ...zeroBalances, ...(member.savingsBalances || {}) };
         const previous = Number(balances[savingForm.type] || 0);
         if (savingForm.direction === "withdrawal" && amount > previous) throw new Error("Saldo simpanan tidak mencukupi. Saldo tersedia " + money(previous) + ".");
@@ -400,6 +400,7 @@ export default function FinancialApp() {
         if (periodSnap.exists() && periodSnap.data().status === "closed") throw new Error("Periode pencairan sudah ditutup.");
         const app = appSnap.data();
         const principal = Number(app.amount);
+        if (app.source === "KOPERASI" && principal > cashBalance) throw new Error("Saldo kas koperasi tidak mencukupi untuk pencairan ini. Saldo saat ini " + money(cashBalance) + ".");
         const monthlyPrincipal = Math.ceil(principal / Number(app.termMonths));
         const monthlyInterest = Math.round(principal * Number(app.interestRate));
         if (!periodSnap.exists()) transaction.set(periodRef, newPeriodData(periodId, user));
