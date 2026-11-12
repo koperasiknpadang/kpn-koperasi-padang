@@ -4,6 +4,7 @@ Panduan ini menggunakan Workload Identity Federation (OIDC). GitHub Actions memp
 
 ## Identitas proyek
 - GitHub repository: `koperasiknpadang/kpn-koperasi-padang`
+- GitHub repository ID (unik): `1453755133`
 - Firebase / Google Cloud project ID: `koperasi-kn-padang`
 - Firebase Hosting target: default site proyek
 
@@ -32,9 +33,9 @@ Jangan membuat atau mengunduh JSON key. Service account ini hanya untuk deployme
 7. Audience: pilih Default audience.
 8. Attribute mapping:
    - `google.subject` = `assertion.sub`
-   - `attribute.repository` = `assertion.repository`
-9. Attribute condition (batasi hanya repository ini):
-   `assertion.repository == 'koperasiknpadang/kpn-koperasi-padang'`
+   - `attribute.repository_id` = `assertion.repository_id`
+9. Attribute condition (batasi hanya repository ini berdasarkan ID unik GitHub):
+   `assertion.repository_id == '1453755133'`
 10. Simpan provider.
 
 Jika Console menampilkan pilihan membuat pool dan provider dalam satu wizard, gunakan nilai yang sama di atas.
@@ -43,7 +44,7 @@ Jika Console menampilkan pilihan membuat pool dan provider dalam satu wizard, gu
 Di detail service account `github-hosting-deployer`:
 1. Buka tab Permissions / Grant access (atau Manage access).
 2. Tambahkan principal dari Workload Identity Pool dengan format:
-   `principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github-actions-pool/attribute.repository/koperasiknpadang/kpn-koperasi-padang`
+   `principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github-actions-pool/attribute.repository_id/1453755133`
 3. Ganti `PROJECT_NUMBER` dengan **Project number** numerik Google Cloud, bukan project ID.
 4. Berikan role **Workload Identity User** (`roles/iam.workloadIdentityUser`).
 5. Simpan.
