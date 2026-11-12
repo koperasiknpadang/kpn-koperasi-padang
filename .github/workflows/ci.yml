@@ -6,7 +6,7 @@ on:
       - main
   push:
     branches:
-      - feature/core-financial-system
+      - feature/operational-finance-v1
 
 jobs:
   build:

@@ -41,6 +41,10 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
+      - name: Deploy Firestore Security Rules
+        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+        run: npx --yes firebase-tools@latest deploy --only firestore:rules --project koperasi-kn-padang --non-interactive
+
       - name: Deploy to Firebase Hosting
         if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
         run: npx --yes firebase-tools@latest deploy --only hosting --project koperasi-kn-padang --non-interactive
