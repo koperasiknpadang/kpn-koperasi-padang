@@ -275,13 +275,7 @@ export default function App() {
       bankRows.forEach((row: ImportedRow) => {
         const memberId = stableId("member", row.normalizedName);
         if (!memberDocs.has(memberId)) {
-          memberDocs.set(memberId, {
-            name: row.memberName,
-            normalizedName: row.normalizedName,
-            active: true,
-            origin: "workbook_import",
-            updatedAt: serverTimestamp()
-          });
+          throw new Error("Nama anggota " + row.memberName + " pada sheet " + row.source + " tidak ditemukan di sheet Pot. Koperasi.");
         }
         const hasLoan = row.originalLoanAmount > 0 || row.outstandingPrincipal > 0 ||
           row.principalPaid > 0 || row.interestPaid > 0;
