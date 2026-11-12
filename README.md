@@ -1,72 +1,66 @@
-# KPN Koperasi Kejaksaan Negeri Padang
+# Sistem Informasi Koperasi KPN Kejaksaan Negeri Padang
 
-Panduan aktivasi Firebase, keamanan, dan deployment melalui browser: [PANDUAN_DEPLOYMENT.md](./PANDUAN_DEPLOYMENT.md).
+Aplikasi operasional koperasi berbasis web. Pencatatan rutin dilakukan langsung di aplikasi; Excel digunakan untuk ekspor laporan dan dapat disiapkan untuk migrasi historis terkontrol.
 
-Aplikasi web koperasi dengan dashboard publik berisi ringkasan agregat dan area pengelola yang dilindungi Firebase Authentication + Cloud Firestore.
+## Modul aplikasi
+- Dashboard: anggota aktif, simpanan, pinjaman berjalan, saldo kas/bank, dan aktivitas.
+- Anggota: tambah, ubah, aktif/nonaktif, serta riwayat keuangan anggota.
+- Simpanan: simpanan pokok, wajib, sukarela; setoran dan penarikan dengan validasi saldo.
+- Pinjaman: pengajuan, persetujuan/penolakan, pencairan, sumber Koperasi/Mandiri/BRI.
+- Angsuran: angsuran rutin dan pelunasan dipercepat, pembaruan sisa pokok, pencegahan pembayaran ganda per periode.
+- Kas: kas masuk/keluar dan buku kas.
+- Laporan: jurnal umum, neraca saldo sederhana, ringkasan SHU sementara, ekspor Excel, dan cetak/PDF melalui browser.
+- Periode: dibuat otomatis dari tanggal transaksi dan dapat ditutup untuk mengunci pencatatan.
+- Ringkasan publik: hanya angka agregat yang diterbitkan administrator.
+
+## Aturan perhitungan pinjaman
+Bunga bawaan adalah 1% per bulan dari pokok awal (flat). Pokok angsuran dibagi menurut tenor; angsuran terakhir menyesuaikan sisa pokok. Tarif bunga dapat disesuaikan saat pengajuan. Pelunasan dipercepat menghentikan angsuran berikutnya; bunga pelunasan diisi sesuai kesepakatan yang berlaku.
+
+Pinjaman bersumber KOPERASI memengaruhi kas dan jurnal koperasi. Pinjaman MANDIRI/BRI dicatat sebagai fasilitas pinjaman eksternal anggota dan tidak dicampurkan ke arus kas KPN.
+
+## Prinsip pencatatan
+- Setiap transaksi keuangan disimpan sebagai catatan baru (append-only), dilengkapi periode, tanggal, pembuat, dan audit log.
+- Saldo simpanan diperbarui atomik bersama transaksi simpanan.
+- Angsuran memakai ID deterministik per pinjaman/periode agar pembayaran ganda ditolak.
+- Anggota tidak dihapus permanen; anggota keluar dinonaktifkan agar riwayat tetap tersedia.
+- Periode yang sudah ditutup tidak menerima transaksi baru.
+- Jurnal dibuat otomatis dari transaksi simpanan, pinjaman koperasi, angsuran koperasi, dan kas umum.
+- Jangan memasukkan data operasional asli sebelum aturan Firestore baru berstatus aktif dan pengujian alur transaksi selesai.
 
 ## Teknologi
-- React + TypeScript + Vite
+- React 19 + TypeScript + Vite
 - Tailwind CSS
 - Firebase Authentication (Email/Password)
 - Cloud Firestore
-- SheetJS untuk membaca workbook Excel
-- Firebase Hosting melalui GitHub Actions
+- SheetJS untuk ekspor Excel
+- Firebase Hosting melalui GitHub Actions dan Google Cloud Workload Identity Federation
 
-## Konfigurasi Firebase
-Konfigurasi Web Firebase berada di `src/firebase.ts`. Firebase Web API key bukan password atau service-account key. Keamanan data tetap wajib ditegakkan melalui Authentication dan Firestore Security Rules.
+## Firebase dan administrator
+Project ID: `koperasi-kn-padang`
 
-Pastikan project ID adalah `koperasi-kn-padang` dan aktifkan:
-1. Authentication → Sign-in method → Email/Password.
-2. Cloud Firestore Database.
-3. Firebase Hosting.
+Aplikasi memeriksa dokumen `admins/{UID}` dengan:
+- `role`: `super_admin` atau `admin`
+- `active`: `true`
 
-## Membuat Super Admin pertama
-Buat akun melalui Firebase Authentication, kemudian di Firestore buat dokumen:
-- Collection: `admins`
-- Document ID: UID akun administrator
-- `role`: string `super_admin`
-- `active`: boolean `true`
-
-Aplikasi hanya menerima akun yang UID-nya memiliki dokumen aktif tersebut. Dokumen admin tidak dapat dibuat atau diubah dari browser aplikasi; kelola langsung melalui Firebase Console oleh pemilik proyek.
+Dokumen administrator hanya dikelola pemilik proyek melalui Firebase Console. Jangan pernah menaruh password, service-account JSON, atau private key di GitHub atau kode aplikasi.
 
 ## Firestore Security Rules
-Salin isi `firestore.rules` ke Firebase Console → Firestore Database → Rules, lalu klik Publish. Aturan ini mengizinkan publik membaca hanya `public_summaries`; koleksi anggota, pinjaman, periode, dan transaksi hanya dapat diakses administrator aktif.
+File `firestore.rules` mencakup koleksi operasional baru dan penguncian periode. Workflow deployment mencoba menerbitkan Firestore Rules terlebih dahulu, baru kemudian Firebase Hosting. Service account OIDC harus memiliki izin Firebase Rules Admin selain izin Hosting yang sudah digunakan. Jika penerbitan rules gagal, deployment Hosting dihentikan agar aplikasi baru tidak berjalan dengan aturan database lama.
 
-**Penting:** keberadaan file `firestore.rules` di GitHub tidak berarti aturan tersebut sudah diterbitkan di Firebase. Publikasikan dan uji aturan di Firebase Console sebelum memasukkan data asli.
+## Koleksi Firestore operasional
+- `admins`: identitas dan hak akses administrator.
+- `members`: master anggota dan saldo simpanan terproyeksi.
+- `savings_transactions`: setoran dan penarikan simpanan.
+- `loan_applications`: pengajuan dan keputusan pinjaman.
+- `loans`: posisi pinjaman terkini.
+- `installments`: pembayaran angsuran dan pelunasan.
+- `cash_transactions`: buku kas masuk/keluar.
+- `journal_entries`: jurnal debit/kredit otomatis.
+- `periods`: periode bulanan dan status buka/tutup.
+- `audit_logs`: jejak aktivitas administrator.
+- `public_summaries`: ringkasan agregat yang boleh dibaca publik.
 
-## Menjalankan lokal (opsional)
-1. Pasang Node.js 24.12 atau lebih baru.
-2. Jalankan `npm install`.
-3. Jalankan `npm run dev`.
-4. Buka alamat lokal yang ditampilkan Vite.
+Koleksi `monthly_records` dan `loan_snapshots` dipertahankan sebagai koleksi legacy untuk migrasi terkontrol, bukan sumber data operasional aplikasi baru.
 
-## Deploy otomatis ke Firebase Hosting
-Deployment menggunakan Google Cloud Workload Identity Federation (OIDC). GitHub Actions memperoleh kredensial sementara; tidak perlu membuat atau menyimpan service-account JSON key.
-
-Ikuti langkah lengkap di [PANDUAN_DEPLOYMENT.md](./PANDUAN_DEPLOYMENT.md). Ringkasnya:
-1. Aktifkan Firebase Hosting.
-2. Buat service account khusus deployment dengan izin minimum.
-3. Konfigurasikan Workload Identity Pool dan OIDC provider untuk repository ini.
-4. Tambahkan dua GitHub Actions repository variables: `GCP_WORKLOAD_IDENTITY_PROVIDER` dan `GCP_SERVICE_ACCOUNT`.
-5. Setiap push ke branch `main` akan menjalankan build dan, jika kedua variable tersedia, deployment Firebase Hosting secara otomatis.
-
-Workflow saat ini hanya menerbitkan Firebase Hosting; workflow tidak menerbitkan Firestore Security Rules. Deploy belum dianggap berhasil sampai langkah Firebase Hosting benar-benar selesai dengan status sukses. Jangan mengunggah service-account JSON, private key, password, atau data anggota ke repository maupun GitHub.
-
-## Alur data Excel
-Menu Impor Excel membaca tiga sheet: `Pot. Koperasi`, `MANDIRI`, dan `BRI`. Baris data dimulai dari baris 6; baris yang diproses harus memiliki nomor pada kolom A dan nama anggota pada kolom B.
-
-Importer menyimpan snapshot bulanan ke `monthly_records` dan memperbarui data anggota/pinjaman. Impor pertama-tama ditampilkan sebagai pratinjau. Periksa periode, jumlah baris, dan angka sebelum menyimpan.
-
-**Penting:** buka workbook di Microsoft Excel, lakukan Calculate/Recalculate, lalu Save sebelum mengimpor agar hasil formula tersimpan. Aplikasi tidak menghitung ulang formula Excel. Angsuran, bunga, sisa pinjaman, dan nomor angsuran tetap harus diperiksa dan disetujui pengelola; aplikasi tidak menaikkan nomor angsuran secara otomatis.
-
-## Struktur Firestore
-- `admins/{uid}`: peran dan status administrator.
-- `members/{memberId}`: master anggota.
-- `loans/{loanId}`: posisi pinjaman terkini per anggota dan sumber.
-- `loan_snapshots/{snapshotId}`: arsip rincian pinjaman per periode (tidak dapat diubah setelah dibuat).
-- `periods/{YYYY-MM}`: periode bulanan dan status.
-- `monthly_records/{recordId}`: snapshot potongan/transaksi per anggota, sumber, dan periode.
-- `public_summaries/current`: ringkasan agregat yang boleh dibaca publik.
-- `audit_logs/{logId}`: catatan aktivitas impor/publikasi.
-
-Jangan mengunggah workbook asli, data anggota, password, private key, atau service-account JSON ke repository publik.
+## Batasan rilis awal
+Versi operasional ini menyediakan pencatatan transaksi inti, jurnal dasar, laporan, dan penguncian periode. Fitur yang masih memerlukan pengembangan/pengujian lanjutan sebelum dipakai sebagai pembukuan resmi meliputi pembatalan/reversal transaksi melalui UI, rekonsiliasi bank, bagan akun yang dapat dikonfigurasi, laporan neraca/SHU sesuai kebijakan koperasi, pemisahan kas dan rekening bank, persetujuan multi-level, backup/pemulihan otomatis, dan migrasi workbook historis. Pengujian transaksi nyata harus dilakukan dengan data uji terlebih dahulu.
