@@ -10,6 +10,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
 import { auth, db } from "./firebase";
+import * as XLSX from "xlsx";
 import { parseWorkbook, stableId, type ImportedRow, type WorkbookPreview } from "./workbook";
 
 type TabName = "overview" | "members" | "loans" | "periods" | "import";
@@ -91,6 +92,7 @@ export default function App() {
   const [fileName, setFileName] = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
 
   async function loadPublicSummary() {
     try {
@@ -133,6 +135,11 @@ export default function App() {
       setDataBusy(false);
     }
   }
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -350,6 +357,73 @@ export default function App() {
     }
   }
 
+  function exportCurrentData() {
+    const workbook = XLSX.utils.book_new();
+    const memberSheet = members.map((member, index) => ({
+      "No.": index + 1, "ID Anggota": member.id, "Nama Anggota": member.name,
+      "Status": member.active === false ? "Nonaktif" : "Aktif"
+    }));
+    const recordSheet = records.map((row, index) => ({
+      "No.": index + 1, "Periode": row.periodId || latestPeriod?.id || "",
+      "ID Anggota": row.memberId || "", "Nama Anggota": row.memberName || "",
+      "Simpanan Pokok": Number(row.savingsPrincipal || 0),
+      "Simpanan Wajib": Number(row.savingsMandatory || 0),
+      "Simpanan Sukarela": Number(row.savingsVoluntary || 0),
+      "Angsuran Pokok": Number(row.principalPaid || 0),
+      "Bunga": Number(row.interestPaid || 0),
+      "Total Angsuran": Number(row.installmentTotal || 0),
+      "Total Potongan": Number(row.totalDeduction || 0),
+      "Sisa Pinjaman": Number(row.outstandingPrincipal || 0)
+    }));
+    const loanSheet = loans.map((loan, index) => ({
+      "No.": index + 1, "Periode": loan.lastPeriodId || latestPeriod?.id || "",
+      "ID Anggota": loan.memberId || "", "Nama Anggota": loan.memberName || "",
+      "Bank": loan.source || "", "Pokok Pinjaman": Number(loan.originalPrincipal || 0),
+      "Angsuran Pokok": Number(loan.installmentPrincipal || 0),
+      "Bunga": Number(loan.monthlyInterest || 0),
+      "Sisa Pinjaman": Number(loan.outstandingPrincipal || 0), "Status": loan.status || ""
+    }));
+    const periodSheet = periods.map((period, index) => ({
+      "No.": index + 1, "ID Periode": period.id, "Nama Periode": period.periodLabel || "",
+      "Jumlah Baris Impor": Number(period.importedRows || 0),
+      "Jumlah Anggota": Number(period.memberCount || 0), "Status": period.status || "draft"
+    }));
+    const addSheet = (rows: AnyRecord[], name: string) => {
+      const sheet = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(workbook, sheet, name);
+    };
+    addSheet(memberSheet, "Anggota");
+    addSheet(recordSheet, "Rekap Keuangan");
+    addSheet(loanSheet, "Pinjaman Bank");
+    addSheet(periodSheet, "Daftar Periode");
+    const stamp = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Jakarta" }).format(new Date()).replace(/-/g, "");
+    XLSX.writeFile(workbook, "Laporan_KPN_" + (latestPeriod?.id || "semua-periode") + "_" + stamp + ".xlsx");
+    setMessage("File Excel berhasil disiapkan. Data keuangan berisi periode terbaru yang sedang ditampilkan; daftar periode dan anggota disertakan.");
+  }
+
+  function exportPreview() {
+    if (!preview) return;
+    const workbook = XLSX.utils.book_new();
+    const master = preview.rows.filter(row => row.source === "KOPERASI").map(row => ({
+      "No. Baris Excel": row.rowNumber, "Nama Anggota": row.memberName,
+      "Simpanan Pokok": row.savingsPrincipal, "Simpanan Wajib": row.savingsMandatory,
+      "Simpanan Sukarela": row.savingsVoluntary, "Angsuran Pokok": row.principalPaid,
+      "Bunga": row.interestPaid, "Total Angsuran": row.installmentTotal,
+      "Total Potongan": row.totalDeduction, "Sisa Pinjaman": row.outstandingPrincipal
+    }));
+    const bankRows = (source: "MANDIRI" | "BRI") => preview.rows.filter(row => row.source === source).map(row => ({
+      "No. Baris Excel": row.rowNumber, "Nama Anggota": row.memberName,
+      "Pokok Pinjaman": row.originalLoanAmount, "Angsuran Pokok": row.principalPaid,
+      "Bunga": row.interestPaid, "Total Angsuran": row.installmentTotal,
+      "Sisa Pinjaman": row.outstandingPrincipal, "Tenor (Bulan)": row.termMonths,
+      "Catatan": row.note
+    }));
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(master), "Pot. Koperasi");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(bankRows("MANDIRI")), "MANDIRI");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(bankRows("BRI")), "BRI");
+    XLSX.writeFile(workbook, "Pratinjau_Impor_KPN_" + preview.periodId + ".xlsx");
+  }
+
   async function resetInitialData() {
     if (!isAdmin || resetBusy) return;
     const phrase = window.prompt("Reset hanya untuk menghapus data awal hasil impor yang masih dummy/tidak lengkap. Ketik RESET DATA AWAL untuk melanjutkan:");
@@ -549,7 +623,11 @@ export default function App() {
                 <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">{tabs.find(item => item.id === tab)?.label}</h1>
                 <p className="mt-1 text-sm text-slate-500">Kelola data koperasi dan laporan bulanan.</p>
               </div>
-              <button onClick={() => void refreshAdminData()} className="inline-flex items-center gap-2 rounded-xl border border-sage-200 bg-white px-3 py-2 text-sm font-medium text-sage-800 hover:bg-sage-50"><RefreshCw size={15} className={dataBusy ? "animate-spin" : ""} /> Segarkan</button>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="rounded-xl border border-sage-100 bg-white px-3 py-2 text-right leading-tight"><p className="text-[10px] text-slate-400">Waktu Padang (WIB)</p><p className="text-xs font-semibold tabular-nums text-sage-800">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(currentTime)}</p><p className="text-[10px] text-slate-500">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", weekday: "short", day: "2-digit", month: "short", year: "numeric" }).format(currentTime)}</p></div>
+                <button onClick={exportCurrentData} className="inline-flex items-center gap-2 rounded-xl border border-sage-200 bg-white px-3 py-2 text-sm font-medium text-sage-800 hover:bg-sage-50"><FileSpreadsheet size={15} /> Ekspor Excel</button>
+                <button onClick={() => void refreshAdminData()} className="inline-flex items-center gap-2 rounded-xl border border-sage-200 bg-white px-3 py-2 text-sm font-medium text-sage-800 hover:bg-sage-50"><RefreshCw size={15} className={dataBusy ? "animate-spin" : ""} /> Segarkan</button>
+              </div>
             </div>
 
             {error ? <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><AlertCircle size={17} className="mt-0.5 shrink-0" />{error}</div> : null}
@@ -644,7 +722,7 @@ export default function App() {
                   <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-semibold">Pratinjau impor</h2><p className="mt-1 text-sm text-slate-500">{preview.periodLabel} · {number(preview.rows.length)} baris data terbaca</p></div><span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">Status: draft</span></div>
                   {preview.warnings.length ? <div className="mt-4 space-y-2">{preview.warnings.slice(0, 8).map((warning, index) => <p key={index} className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"><AlertCircle size={14} className="shrink-0" />{warning}</p>)}</div> : <p className="mt-4 flex items-center gap-2 text-xs text-emerald-700"><CheckCircle2 size={15} /> Struktur tiga sheet berhasil dibaca.</p>}
                   <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[700px] text-left text-xs"><thead><tr className="border-b border-slate-100 text-slate-400"><th className="py-2">Nama anggota</th><th className="py-2">Sumber</th><th className="py-2 text-right">Simpanan wajib</th><th className="py-2 text-right">Angsuran pokok</th><th className="py-2 text-right">Bunga</th><th className="py-2 text-right">Sisa pinjaman</th></tr></thead><tbody>{preview.rows.slice(0, 8).map((row, index) => <tr key={index} className="border-b border-slate-50"><td className="py-2 font-medium">{row.memberName}</td><td className="py-2">{sourceLabel(row.source)}</td><td className="py-2 text-right">{money(row.savingsMandatory)}</td><td className="py-2 text-right">{money(row.principalPaid)}</td><td className="py-2 text-right">{money(row.interestPaid)}</td><td className="py-2 text-right">{money(row.outstandingPrincipal)}</td></tr>)}</tbody></table></div>
-                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><p className="max-w-xl text-xs text-slate-500">Simpan sebagai draft terlebih dahulu. Pastikan tidak ada periode dengan ID yang sama.</p><button disabled={importBusy || preview.rows.length === 0 || preview.warnings.some(warning => warning.startsWith("STOP:"))} onClick={() => void saveImport()} className="inline-flex items-center gap-2 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sage-600 disabled:cursor-not-allowed disabled:opacity-50">{importBusy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />} Simpan sebagai draft</button></div>
+                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><p className="max-w-xl text-xs text-slate-500">Simpan sebagai draft terlebih dahulu. Pastikan tidak ada periode dengan ID yang sama.</p><div className="flex flex-wrap gap-2"><button onClick={exportPreview} className="inline-flex items-center gap-2 rounded-xl border border-sage-200 px-4 py-2.5 text-sm font-semibold text-sage-800 hover:bg-sage-50"><FileSpreadsheet size={15} /> Ekspor pratinjau</button><button disabled={importBusy || preview.rows.length === 0 || preview.warnings.some(warning => warning.startsWith("STOP:"))} onClick={() => void saveImport()} className="inline-flex items-center gap-2 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sage-600 disabled:cursor-not-allowed disabled:opacity-50">{importBusy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />} Simpan sebagai draft</button></div></div>
                 </Card> : null}
               </div>
             ) : null}
