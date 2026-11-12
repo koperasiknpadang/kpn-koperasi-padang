@@ -1,5 +1,7 @@
 # KPN Koperasi Kejaksaan Negeri Padang
 
+Panduan aktivasi Firebase, keamanan, dan deployment melalui browser: [PANDUAN_DEPLOYMENT.md](./PANDUAN_DEPLOYMENT.md).
+
 Aplikasi web koperasi dengan dashboard publik berisi ringkasan agregat dan area pengelola yang dilindungi Firebase Authentication + Cloud Firestore.
 
 ## Teknologi
