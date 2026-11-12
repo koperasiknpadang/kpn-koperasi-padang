@@ -236,17 +236,17 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
           Math.abs(imported.installmentTotal - imported.principalPaid - imported.interestPaid) > 1) {
         warnings.push("PERIKSA: Total angsuran tidak sama dengan pokok + bunga pada " + sheetName + " baris " + (index + 1) + ".");
       }
-      if (false && source !== "KOPERASI" && imported.outstandingPrincipal > 0 && imported.installmentNumber === null) {
+      if (source === "KOPERASI" && imported.outstandingPrincipal > 0 && imported.installmentNumber === null) {
         warnings.push("STOP: Nomor angsuran belum diisi untuk pinjaman aktif pada " + sheetName + " baris " + (index + 1) + ". Sistem tidak akan menebak nomor angsuran berikutnya.");
       }
-      if (false && source !== "KOPERASI" && imported.originalLoanAmount > 0 && imported.termMonths === null) {
+      if (source === "KOPERASI" && imported.originalLoanAmount > 0 && imported.termMonths === null) {
         warnings.push("PERIKSA: Tenor pinjaman belum diisi pada " + sheetName + " baris " + (index + 1) + ". Tenor tidak akan ditebak dari jumlah pinjaman.");
       }
-      if (false && source !== "KOPERASI" && imported.outstandingPrincipal > 0 &&
+      if (source === "KOPERASI" && imported.outstandingPrincipal > 0 &&
           imported.principalPaid <= 0 && imported.termMonths === null) {
         warnings.push("STOP: Pokok angsuran bulanan dan tenor sama-sama kosong pada " + sheetName + " baris " + (index + 1) + ". Lengkapi salah satunya agar angsuran berikutnya dapat dihitung.");
       }
-      if (false && source !== "KOPERASI" && imported.outstandingPrincipal > 0 && imported.originalLoanAmount <= 0) {
+      if (source === "KOPERASI" && imported.outstandingPrincipal > 0 && imported.originalLoanAmount <= 0) {
         warnings.push("STOP: Sisa pinjaman ada tetapi pokok awal kosong pada " + sheetName + " baris " + (index + 1) + ".");
       }
     }
