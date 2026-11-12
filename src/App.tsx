@@ -223,6 +223,10 @@ export default function App() {
         setPasswordRequired(true);
         setWorkbookPassword("");
         setError("Password salah atau jenis enkripsi file belum didukung. Periksa password dan coba kembali.");
+      } else if (e?.message === "ENCRYPTED_XLSX_UNSUPPORTED") {
+        setPasswordRequired(false);
+        setWorkbookPassword("");
+        setError("Komponen pembaca Excel terenkripsi tidak tersedia pada versi aplikasi ini. File belum diimpor.");
       } else {
         setPasswordRequired(false);
         setWorkbookPassword("");
