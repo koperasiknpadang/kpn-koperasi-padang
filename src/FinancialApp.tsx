@@ -82,12 +82,12 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="block text-xs font-semibold text-slate-600">{label}{children}</label>;
 }
 function Status({ value }: { value: string }) {
-  const positive = ["active", "open", "approved", "disbursed", "paid", "closed"].includes(value);
+  const positive = ["active", "open", "approved", "disbursed", "paid", "paid_early", "closed"].includes(value);
   const negative = ["inactive", "rejected", "overdue"].includes(value);
   const label: Record<string, string> = {
     active: "Aktif", inactive: "Nonaktif", open: "Terbuka", closed: "Ditutup",
     pending: "Menunggu", approved: "Disetujui", disbursed: "Dicairkan",
-    rejected: "Ditolak", paid: "Lunas", overdue: "Menunggak"
+    rejected: "Ditolak", paid: "Lunas", paid_early: "Lunas Dipercepat", overdue: "Menunggak"
   };
   return <span className={"inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold " +
     (positive ? "bg-emerald-50 text-emerald-700" : negative ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700")}>
@@ -175,7 +175,7 @@ export default function FinancialApp() {
     interestRate: "1", date: todayWib(), note: ""
   });
   const [installmentForm, setInstallmentForm] = useState({
-    loanId: "", kind: "regular", date: todayWib(), payoffInterest: "0", note: ""
+    loanId: "", kind: "regular", date: todayWib(), note: ""
   });
   const [cashForm, setCashForm] = useState({
     type: "expense", category: "Operasional", amount: "", date: todayWib(), note: ""
@@ -510,6 +510,10 @@ export default function FinancialApp() {
           row.originalLoanAmount > 0 || row.outstandingPrincipal > 0 || row.principalPaid > 0 || row.interestPaid > 0
         ).length,
         sourceSheets: ["Pot. Koperasi", "MANDIRI", "BRI"],
+        savingsPrincipalTotal: masterRows.reduce((sum, row) => sum + Number(row.savingsPrincipal || 0), 0),
+        savingsMandatoryTotal: masterRows.reduce((sum, row) => sum + Number(row.savingsMandatory || 0), 0),
+        savingsVoluntaryTotal: masterRows.reduce((sum, row) => sum + Number(row.savingsVoluntary || 0), 0),
+        savingsTotal: masterRows.reduce((sum, row) => sum + Number(row.savingsPrincipal || 0) + Number(row.savingsMandatory || 0) + Number(row.savingsVoluntary || 0), 0),
         importId, importSource: fileName, importedAt: serverTimestamp(),
         createdAt: serverTimestamp(), createdBy: user?.uid || null
       });
@@ -605,6 +609,11 @@ export default function FinancialApp() {
       batch.set(doc(db, "monthly_records", monthlyRecordId), {
         periodId: preview.periodId, periodLabel: preview.periodLabel, importId,
         sourceFile: fileName, sourceSheets: ["Pot. Koperasi", "MANDIRI", "BRI"],
+        memberCount: masterRows.length,
+        savingsPrincipalTotal: masterRows.reduce((sum, row) => sum + Number(row.savingsPrincipal || 0), 0),
+        savingsMandatoryTotal: masterRows.reduce((sum, row) => sum + Number(row.savingsMandatory || 0), 0),
+        savingsVoluntaryTotal: masterRows.reduce((sum, row) => sum + Number(row.savingsVoluntary || 0), 0),
+        savingsTotal: masterRows.reduce((sum, row) => sum + Number(row.savingsPrincipal || 0) + Number(row.savingsMandatory || 0) + Number(row.savingsVoluntary || 0), 0),
         masterRows: masterRows.map(row => ({
           memberNo: row.memberNo, memberName: row.memberName, rowNumber: row.rowNumber,
           savingsPrincipal: row.savingsPrincipal, savingsMandatory: row.savingsMandatory,
@@ -646,7 +655,8 @@ export default function FinancialApp() {
         ...auditData("IMPORT_MONTHLY_WORKBOOK", "periods", preview.periodId, user),
         importId, sourceFile: fileName, importedRows: masterRows.length,
         loanCount: totalLoanRows, installmentCount: importedInstallments,
-        savingsTotal: totalSavings
+        savingsTotal: totalSavings,
+        savingsMandatoryTotal: masterRows.reduce((sum, row) => sum + Number(row.savingsMandatory || 0), 0)
       });
       operationCount += 1;
 
@@ -656,7 +666,7 @@ export default function FinancialApp() {
       await batch.commit();
       setMessage("Impor " + preview.periodLabel + " berhasil. " + masterRows.length + " anggota, " +
         totalLoanRows + " pinjaman bank, " + importedInstallments + " angsuran, dan " +
-        money(totalSavings) + " simpanan telah dicatat. Pinjaman MANDIRI/BRI tidak dimasukkan ke kas KPN.");
+        money(totalSavings) + " simpanan telah dicatat, termasuk simpanan wajib " + money(masterRows.reduce((sum, row) => sum + Number(row.savingsMandatory || 0), 0)) + ". Pinjaman MANDIRI/BRI tidak dimasukkan ke kas KPN.");
       setPreview(null); setFileName(""); setSelectedWorkbookFile(null); setWorkbookPassword("");
       await refreshAll();
       setTab("dashboard");
@@ -767,27 +777,32 @@ export default function FinancialApp() {
     const isPayoff = installmentForm.kind === "payoff";
     const outstanding = Number(loan.outstandingPrincipal || 0);
     const principalPaid = isPayoff ? outstanding : Math.min(Number(loan.monthlyPrincipal || 0), outstanding);
-    const interestPaid = isPayoff ? Number(installmentForm.payoffInterest || 0) : Number(loan.monthlyInterest || 0);
+    const interestPaid = isPayoff ? 0 : Number(loan.monthlyInterest || 0);
     if (principalPaid <= 0 || interestPaid < 0) return setError("Nominal angsuran tidak valid.");
     setBusy("installment"); setError(""); setMessage("");
     const loanRef = doc(db, "loans", loan.id);
     const periodRef = doc(db, "periods", periodId);
-    const installmentRef = doc(db, "installments", loan.id + "__" + periodId);
+    const regularInstallmentRef = doc(db, "installments", loan.id + "__" + periodId);
+    const payoffInstallmentRef = doc(db, "installments", loan.id + "__" + periodId + "__payoff");
+    const installmentRef = isPayoff ? payoffInstallmentRef : regularInstallmentRef;
     const cashRef = doc(collection(db, "cash_transactions"));
     const journalRef = doc(collection(db, "journal_entries"));
     const auditRef = doc(collection(db, "audit_logs"));
     try {
       await runTransaction(db, async transaction => {
-        const [loanSnap, periodSnap, installmentSnap] = await Promise.all([
-          transaction.get(loanRef), transaction.get(periodRef), transaction.get(installmentRef)
+        const [loanSnap, periodSnap, regularInstallmentSnap, payoffInstallmentSnap] = await Promise.all([
+          transaction.get(loanRef), transaction.get(periodRef),
+          transaction.get(regularInstallmentRef), transaction.get(payoffInstallmentRef)
         ]);
         if (!loanSnap.exists() || loanSnap.data().status !== "active") throw new Error("Pinjaman tidak aktif atau sudah lunas.");
         if (periodSnap.exists() && periodSnap.data().status !== "open") throw new Error("Periode pembayaran tidak terbuka atau sudah ditutup.");
-        if (installmentSnap.exists()) throw new Error("Angsuran pinjaman ini untuk periode " + periodLabel(periodId) + " sudah dicatat. Sistem mencegah pembayaran ganda.");
+        if (isPayoff ? payoffInstallmentSnap.exists() : (regularInstallmentSnap.exists() || payoffInstallmentSnap.exists())) {
+          throw new Error("Pembayaran untuk periode " + periodLabel(periodId) + " sudah dicatat atau pinjaman sudah dilunasi. Sistem mencegah pembayaran ganda.");
+        }
         const currentLoan = loanSnap.data();
         const currentOutstanding = Number(currentLoan.outstandingPrincipal || 0);
         const principal = isPayoff ? currentOutstanding : Math.min(Number(currentLoan.monthlyPrincipal || 0), currentOutstanding);
-        const interest = isPayoff ? interestPaid : Number(currentLoan.monthlyInterest || 0);
+        const interest = isPayoff ? 0 : Number(currentLoan.monthlyInterest || 0);
         if (principal <= 0) throw new Error("Sisa pokok pinjaman sudah nol.");
         const remaining = Math.max(0, currentOutstanding - principal);
         const total = principal + interest;
@@ -795,7 +810,8 @@ export default function FinancialApp() {
         if (!periodSnap.exists()) transaction.set(periodRef, newPeriodData(periodId, user));
         transaction.update(loanRef, {
           outstandingPrincipal: remaining, installmentNumber: nextNumber,
-          status: remaining === 0 ? "paid" : "active", lastPaymentDate: installmentForm.date,
+          status: remaining === 0 ? (isPayoff ? "paid_early" : "paid") : "active",
+          paidEarly: isPayoff, lastPaymentDate: installmentForm.date,
           updatedAt: serverTimestamp()
         });
         transaction.set(installmentRef, {
@@ -822,7 +838,7 @@ export default function FinancialApp() {
         }
         transaction.set(auditRef, auditData(isPayoff ? "EARLY_LOAN_PAYOFF" : "RECEIVE_INSTALLMENT", "installments", installmentRef.id, user));
       });
-      setInstallmentForm({ loanId: "", kind: "regular", date: todayWib(), payoffInterest: "0", note: "" });
+      setInstallmentForm({ loanId: "", kind: "regular", date: todayWib(), note: "" });
       setMessage(isPayoff ? "Pelunasan dipercepat berhasil dicatat. Tidak ada angsuran berikutnya." : "Pembayaran angsuran berhasil dicatat dan sisa pinjaman diperbarui.");
       await refreshAll();
     } catch (e: any) { setError(e?.message || "Pembayaran angsuran gagal dicatat."); }
@@ -1055,7 +1071,7 @@ export default function FinancialApp() {
       setMemberForm({ memberNo: "", name: "", phone: "", joinDate: todayWib() });
       setSavingForm({ memberId: "", type: "mandatory", direction: "deposit", amount: "", date: todayWib(), note: "" });
       setApplicationForm({ memberId: "", amount: "", termMonths: "12", source: "KOPERASI", interestRate: "1", date: todayWib(), note: "" });
-      setInstallmentForm({ loanId: "", kind: "regular", date: todayWib(), payoffInterest: "0", note: "" });
+      setInstallmentForm({ loanId: "", kind: "regular", date: todayWib(), note: "" });
       setCashForm({ type: "expense", category: "Operasional", amount: "", date: todayWib(), note: "" });
       setPreview(null);
       setFileName("");
@@ -1355,9 +1371,9 @@ export default function FinancialApp() {
               <Field label="Pinjaman aktif"><select className={inputClass} required value={installmentForm.loanId} onChange={e=>setInstallmentForm({...installmentForm,loanId:e.target.value})}><option value="">Pilih pinjaman</option>{loans.filter(l=>l.status==="active").map(l=><option key={l.id} value={l.id}>{l.memberName} · {l.source} · sisa {money(l.outstandingPrincipal)}</option>)}</select></Field>
               <Field label="Jenis pembayaran"><select className={inputClass} value={installmentForm.kind} onChange={e=>setInstallmentForm({...installmentForm,kind:e.target.value})}><option value="regular">Angsuran bulanan</option><option value="payoff">Pelunasan dipercepat</option></select></Field>
               <Field label="Tanggal pembayaran"><input className={inputClass} type="date" required value={installmentForm.date} onChange={e=>setInstallmentForm({...installmentForm,date:e.target.value})}/></Field>
-              {installmentForm.kind==="payoff"?<Field label="Bunga pelunasan (Rp)"><input className={inputClass} type="number" min="0" value={installmentForm.payoffInterest} onChange={e=>setInstallmentForm({...installmentForm,payoffInterest:e.target.value})}/></Field>:null}
+              {installmentForm.kind==="payoff"?<div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-900">Pelunasan dipercepat hanya membayar sisa pokok. Bunga bulan berjalan dan bulan berikutnya tidak ditagihkan pada transaksi pelunasan.</div>:null}
               <Field label="Catatan"><input className={inputClass} value={installmentForm.note} onChange={e=>setInstallmentForm({...installmentForm,note:e.target.value})} placeholder="Opsional"/></Field>
-              {installmentForm.loanId?(()=>{const l=loans.find(x=>x.id===installmentForm.loanId);if(!l)return null;const p=installmentForm.kind==="payoff"?Number(l.outstandingPrincipal||0):Math.min(Number(l.monthlyPrincipal||0),Number(l.outstandingPrincipal||0));const i=installmentForm.kind==="payoff"?Number(installmentForm.payoffInterest||0):Number(l.monthlyInterest||0);return <div className="rounded-xl bg-emerald-50 p-3 text-sm"><p className="text-xs font-semibold text-emerald-800">Pratinjau pembayaran</p><div className="mt-2 flex justify-between"><span>Pokok</span><strong>{money(p)}</strong></div><div className="mt-1 flex justify-between"><span>Bunga</span><strong>{money(i)}</strong></div><div className="mt-2 flex justify-between border-t border-emerald-100 pt-2"><span>Total</span><strong>{money(p+i)}</strong></div></div>;})():null}
+              {installmentForm.loanId?(()=>{const l=loans.find(x=>x.id===installmentForm.loanId);if(!l)return null;const p=installmentForm.kind==="payoff"?Number(l.outstandingPrincipal||0):Math.min(Number(l.monthlyPrincipal||0),Number(l.outstandingPrincipal||0));const i=installmentForm.kind==="payoff"?0:Number(l.monthlyInterest||0);return <div className="rounded-xl bg-emerald-50 p-3 text-sm"><p className="text-xs font-semibold text-emerald-800">Pratinjau pembayaran</p><div className="mt-2 flex justify-between"><span>Pokok</span><strong>{money(p)}</strong></div><div className="mt-1 flex justify-between"><span>Bunga</span><strong>{money(i)}</strong></div><div className="mt-2 flex justify-between border-t border-emerald-100 pt-2"><span>Total</span><strong>{money(p+i)}</strong></div></div>;})():null}
               <div className="sm:col-span-2 xl:col-span-3"><button className={buttonPrimary} disabled={busy==="installment"||!loans.some(l=>l.status==="active")}>{busy==="installment"?<Loader2 size={16} className="animate-spin"/>:<Banknote size={16}/>}Catat pembayaran</button></div>
             </form>
           </Card>
@@ -1418,10 +1434,11 @@ export default function FinancialApp() {
                 <p className="mt-1 text-sm text-slate-500">{preview.periodLabel} · {fmtNumber(preview.rows.length)} baris terbaca · {fileName}</p>
               </div><Status value="open"/>
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Anggota utama</p><p className="mt-1 text-lg font-bold">{fmtNumber(preview.rows.filter(row=>row.source==="KOPERASI").length)}</p></div>
               <div className="rounded-xl bg-sky-50 p-3"><p className="text-xs text-sky-800">Fasilitas bank</p><p className="mt-1 text-lg font-bold">{fmtNumber(preview.rows.filter(row=>row.source!=="KOPERASI"&&(row.originalLoanAmount>0||row.outstandingPrincipal>0)).length)}</p></div>
-              <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Total simpanan bulan ini</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.source==="KOPERASI").reduce((sum,row)=>sum+row.savingsPrincipal+row.savingsMandatory+row.savingsVoluntary,0))}</p></div>
+              <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Simpanan wajib seluruh anggota</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.source==="KOPERASI").reduce((sum,row)=>sum+row.savingsMandatory,0))}</p></div>
+              <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Total seluruh simpanan</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.source==="KOPERASI").reduce((sum,row)=>sum+row.savingsPrincipal+row.savingsMandatory+row.savingsVoluntary,0))}</p></div>
               <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-600">Total angsuran bank</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.source!=="KOPERASI").reduce((sum,row)=>sum+row.installmentTotal,0))}</p></div>
             </div>
             {preview.warnings.length ? <div className="mt-4 space-y-2">
