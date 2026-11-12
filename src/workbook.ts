@@ -67,15 +67,14 @@ function periodFromCell(value: unknown): string | null {
     }
   } else if (typeof value === "string") {
     const raw = value.trim().toLowerCase();
-    const numeric = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    const numeric = raw.match(/^(\d{1,4})[/-](\d{1,2})[/-](\d{1,4})$/);
     if (numeric) {
       const first = Number(numeric[1]);
       const second = Number(numeric[2]);
-      const y = Number(numeric[3]);
-      // Tanggal Indonesia dd/mm/yyyy; dukung yyyy/mm/dd bila tahun berada di depan.
-      const m = y > 0 ? second : first;
-      year = y;
-      month = m;
+      const third = Number(numeric[3]);
+      // Format Indonesia dd/mm/yyyy dan format ISO yyyy/mm/dd.
+      year = numeric[1].length === 4 ? first : third;
+      month = numeric[1].length === 4 ? second : second;
     } else {
       const iso = raw.match(/^(\d{4})-(\d{1,2})(?:-\d{1,2})?/);
       if (iso) {
@@ -89,7 +88,8 @@ function periodFromCell(value: unknown): string | null {
           september: 9, sep: 9, oktober: 10, okt: 10, october: 10, oct: 10,
           november: 11, nov: 11, desember: 12, des: 12, december: 12, dec: 12
         };
-        const monthEntry = Object.entries(months).find(([name]) => new RegExp("(^|\\\\s)" + name + "($|\\\\s)", "i").test(raw));
+        const tokens = raw.split(/[^a-z]+/).filter(Boolean);
+        const monthEntry = Object.entries(months).find(([name]) => tokens.includes(name));
         const y = raw.match(/(?:19|20)\d{2}/);
         if (monthEntry && y) {
           month = monthEntry[1];
