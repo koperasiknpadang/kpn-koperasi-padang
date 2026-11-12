@@ -108,9 +108,9 @@ export default function App() {
         getDocs(collection(db, "loans")),
         getDocs(collection(db, "periods"))
       ]);
-      const memberRows = memberSnap.docs.map(item => ({ id: item.id, ...item.data() }));
-      const loanRows = loanSnap.docs.map(item => ({ id: item.id, ...item.data() }));
-      const periodRows = periodSnap.docs.map(item => ({ id: item.id, ...item.data() }))
+      const memberRows: AnyRecord[] = memberSnap.docs.map(item => ({ id: item.id, ...item.data() }));
+      const loanRows: AnyRecord[] = loanSnap.docs.map(item => ({ id: item.id, ...item.data() }));
+      const periodRows: AnyRecord[] = periodSnap.docs.map(item => ({ id: item.id, ...item.data() }))
         .sort((a, b) => String(a.id).localeCompare(String(b.id))).reverse();
       setMembers(memberRows.sort((a, b) => String(a.name).localeCompare(String(b.name), "id")));
       setLoans(loanRows.sort((a, b) => String(a.memberName).localeCompare(String(b.memberName), "id")));
