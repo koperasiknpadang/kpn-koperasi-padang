@@ -451,7 +451,7 @@ export default function FinancialApp() {
         ]);
         if (!appSnap.exists() || appSnap.data().status !== "pending") throw new Error("Pengajuan sudah diproses atau tidak ditemukan.");
         if (!memberSnap.exists() || memberSnap.data().active === false) throw new Error("Anggota tidak aktif atau tidak ditemukan.");
-        if (periodSnap.exists() && periodSnap.data().status !== "open") throw new Error("Periode pencairan sudah ditutup.");
+        if (periodSnap.exists() && periodSnap.data().status !== "open") throw new Error("Periode pencairan tidak terbuka atau sudah ditutup.");
         const app = appSnap.data();
         const principal = Number(app.amount);
         if (app.source === "KOPERASI" && principal > cashBalance) throw new Error("Saldo kas koperasi tidak mencukupi untuk pencairan ini. Saldo saat ini " + money(cashBalance) + ".");
@@ -523,7 +523,7 @@ export default function FinancialApp() {
           transaction.get(loanRef), transaction.get(periodRef), transaction.get(installmentRef)
         ]);
         if (!loanSnap.exists() || loanSnap.data().status !== "active") throw new Error("Pinjaman tidak aktif atau sudah lunas.");
-        if (periodSnap.exists() && periodSnap.data().status !== "open") throw new Error("Periode pembayaran sudah ditutup.");
+        if (periodSnap.exists() && periodSnap.data().status !== "open") throw new Error("Periode pembayaran tidak terbuka atau sudah ditutup.");
         if (installmentSnap.exists()) throw new Error("Angsuran pinjaman ini untuk periode " + periodLabel(periodId) + " sudah dicatat. Sistem mencegah pembayaran ganda.");
         const currentLoan = loanSnap.data();
         const currentOutstanding = Number(currentLoan.outstandingPrincipal || 0);
@@ -992,7 +992,7 @@ export default function FinancialApp() {
             </form>
           </Card>
           <Card><h2 className="mb-4 font-semibold">Riwayat pembayaran angsuran</h2>
-            {installments.length?<div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b border-slate-100 text-xs text-slate-400"><th className="py-3">Tanggal</th><th>Anggota</th><th>Jenis</th><th>Ke</th><th className="text-right">Pokok</th><th className="text-right">Bunga</th><th className="text-right">Total</th><th className="text-right">Sisa</th><th>Aksi</th></tr></thead><tbody>{installments.map(t=><tr key={t.id} className="border-b border-slate-50"><td className="py-3">{dateLabel(t.date)}</td><td className="font-medium">{t.memberName}</td><td>{t.kind==="payoff"?"Pelunasan":"Rutin"}</td><td>{t.installmentNumber||"—"}</td><td className="text-right">{money(t.principalPaid)}</td><td className="text-right">{money(t.interestPaid)}</td><td className="text-right font-semibold">{money(t.totalPaid)}</td><td className="text-right">{money(t.remainingPrincipal)}</td><td>{t.kind==="reversal"||t.reversalOf?"Pembalikan":installments.some(x=>x.reversalOf===t.id)?"Sudah dibalik":<button className="text-xs font-semibold text-rose-700 hover:underline" disabled={busy==="reverse-installment"} onClick={()=>void reverseInstallment(t)}>Batalkan</button>}</td></tr>)}</tbody></table></div>:<Empty title="Belum ada angsuran" detail="Pembayaran akan muncul setelah dicatat melalui formulir di atas."/>}
+            {installments.length?<div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b border-slate-100 text-xs text-slate-400"><th className="py-3">Tanggal</th><th>Anggota</th><th>Jenis</th><th>Ke</th><th className="text-right">Pokok</th><th className="text-right">Bunga</th><th className="text-right">Total</th><th className="text-right">Sisa</th><th>Aksi</th></tr></thead><tbody>{installments.map(t=><tr key={t.id} className="border-b border-slate-50"><td className="py-3">{dateLabel(t.date)}</td><td className="font-medium">{t.memberName}</td><td>{t.kind==="payoff"?"Pelunasan":t.kind==="reversal"?"Pembalikan":"Rutin"}</td><td>{t.installmentNumber||"—"}</td><td className="text-right">{money(t.principalPaid)}</td><td className="text-right">{money(t.interestPaid)}</td><td className="text-right font-semibold">{money(t.totalPaid)}</td><td className="text-right">{money(t.remainingPrincipal)}</td><td>{t.kind==="reversal"||t.reversalOf?"Pembalikan":installments.some(x=>x.reversalOf===t.id)?"Sudah dibalik":<button className="text-xs font-semibold text-rose-700 hover:underline" disabled={busy==="reverse-installment"} onClick={()=>void reverseInstallment(t)}>Batalkan</button>}</td></tr>)}</tbody></table></div>:<Empty title="Belum ada angsuran" detail="Pembayaran akan muncul setelah dicatat melalui formulir di atas."/>}
           </Card>
         </div> : null}
 
