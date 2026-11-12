@@ -18,7 +18,9 @@ Panduan ini menggunakan Workload Identity Federation (OIDC). GitHub Actions memp
 2. Pastikan project yang aktif adalah `koperasi-kn-padang`.
 3. Klik Create service account.
 4. Nama: `github-hosting-deployer`.
-5. Berikan role **Firebase Hosting Admin** (`roles/firebasehosting.admin`).
+5. Berikan dua role berikut:
+   - **Firebase Hosting Admin** (`roles/firebasehosting.admin`).
+   - **API Keys Viewer** (`roles/serviceusage.apiKeysViewer`), diperlukan untuk deployment melalui Firebase CLI.
 6. Selesaikan pembuatan. Salin alamat email service account yang berakhiran `.iam.gserviceaccount.com`; alamat ini bukan password atau private key.
 
 Jangan membuat atau mengunduh JSON key. Service account ini hanya untuk deployment Hosting dan tidak boleh diberi Owner/Editor.
