@@ -179,20 +179,17 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
   if (masterNames.size !== masterRows.length) {
     warnings.push("STOP: Ada nama anggota ganda pada sheet Pot. Koperasi setelah normalisasi. Periksa agar data anggota tidak tergabung.");
   }
-  if (masterNames.size !== lenderNames.size ||
-      [...masterNames].some(name => !lenderNames.has(name)) ||
-      [...lenderNames].some(name => !masterNames.has(name))) {
-    warnings.push("STOP: Daftar nama pada Pot. Koperasi tidak sama dengan gabungan MANDIRI dan BRI. Periksa daftar anggota sebelum impor.");
+  const unknownLenderNames = [...lenderNames].filter(name => !masterNames.has(name));
+  if (unknownLenderNames.length) {
+    warnings.push("STOP: Ada nama pada sheet MANDIRI/BRI yang tidak ditemukan di sheet Pot. Koperasi. Cocokkan nama anggota sebelum impor.");
   }
 
+  // Hanya komponen pinjaman yang direkonsiliasi terhadap gabungan dua bank.
+  // Simpanan dan total potongan tetap bersumber dari sheet utama Pot. Koperasi.
   const reconcileFields: Array<[keyof ImportedRow, string]> = [
-    ["savingsPrincipal", "simpanan pokok"],
-    ["savingsMandatory", "simpanan wajib"],
-    ["savingsVoluntary", "simpanan sukarela"],
     ["principalPaid", "angsuran pokok"],
-    ["interestPaid", "bunga"],
-    ["installmentTotal", "jumlah angsuran"],
-    ["totalDeduction", "total potongan"],
+    ["interestPaid", "bunga pinjaman"],
+    ["installmentTotal", "jumlah angsuran pinjaman"],
     ["outstandingPrincipal", "sisa pinjaman"],
     ["originalLoanAmount", "jumlah pinjaman"]
   ];
