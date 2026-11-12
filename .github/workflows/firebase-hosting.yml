@@ -28,7 +28,8 @@ jobs:
       - name: Dependency security summary
         run: |
           npm audit --json > /tmp/npm-audit.json || true
-          node -e "const a=require('/tmp/npm-audit.json'); for (const [n,v] of Object.entries(a.vulnerabilities||{})) console.log(n+' | '+v.severity+' | '+v.range+' | fix='+JSON.stringify(v.fixAvailable))"
+          node -e "const a=require('/tmp/npm-audit.json'); for (const [n,v] of Object.entries(a.vulnerabilities||{})) console.log(JSON.stringify({name:n,severity:v.severity,range:v.range,via:v.via,fixAvailable:v.fixAvailable}))"
+          npm ls firebase @firebase/firestore @grpc/grpc-js || true
 
       - name: Build application
         run: npm run build
