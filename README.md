@@ -33,7 +33,7 @@ Aplikasi hanya menerima akun yang UID-nya memiliki dokumen aktif tersebut. Dokum
 Salin isi `firestore.rules` ke Firebase Console → Firestore Database → Rules, lalu klik Publish. Aturan ini mengizinkan publik membaca hanya `public_summaries`; koleksi anggota, pinjaman, periode, dan transaksi hanya dapat diakses administrator aktif.
 
 ## Menjalankan lokal (opsional)
-1. Pasang Node.js 20 atau lebih baru.
+1. Pasang Node.js 24.12 atau lebih baru.
 2. Jalankan `npm install`.
 3. Jalankan `npm run dev`.
 4. Buka alamat lokal yang ditampilkan Vite.
