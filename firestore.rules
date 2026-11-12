@@ -40,8 +40,7 @@ service cloud.firestore {
     // Current convenience view; history is kept in loan_snapshots.
     match /loans/{loanId} {
       allow read: if isAdmin();
-      allow create, update: if isAdmin();
-      allow delete: if false;
+      allow create, update, delete: if isAdmin();
     }
 
     match /loan_snapshots/{snapshotId} {
