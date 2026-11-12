@@ -1052,6 +1052,11 @@ export default function FinancialApp() {
       setPublicSummary(null);
       setEditingMemberId("");
       setSelectedMemberId("");
+      setMemberForm({ memberNo: "", name: "", phone: "", joinDate: todayWib() });
+      setSavingForm({ memberId: "", type: "mandatory", direction: "deposit", amount: "", date: todayWib(), note: "" });
+      setApplicationForm({ memberId: "", amount: "", termMonths: "12", source: "KOPERASI", interestRate: "1", date: todayWib(), note: "" });
+      setInstallmentForm({ loanId: "", kind: "regular", date: todayWib(), payoffInterest: "0", note: "" });
+      setCashForm({ type: "expense", category: "Operasional", amount: "", date: todayWib(), note: "" });
       setPreview(null);
       setFileName("");
       setSelectedWorkbookFile(null);
