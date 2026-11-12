@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   onAuthStateChanged, signInWithEmailAndPassword, signOut,
   EmailAuthProvider, reauthenticateWithCredential, updatePassword, type User
 } from "firebase/auth";
 import {
   collection, doc, getDoc, getDocs, runTransaction, serverTimestamp,
-  writeBatch, updateDoc, type Transaction
+  writeBatch, updateDoc
 } from "firebase/firestore";
 import {
   Activity, AlertCircle, ArrowDownCircle, ArrowUpCircle, Banknote,
@@ -52,7 +52,7 @@ const buttonPrimary = "inline-flex items-center justify-center gap-2 rounded-xl 
 const buttonSecondary = "inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50";
 const zeroBalances = { principal: 0, mandatory: 0, voluntary: 0 };
 
-function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <section className={"surface rounded-2xl p-5 " + className}>{children}</section>;
 }
 function Empty({ title, detail }: { title: string; detail: string }) {
@@ -411,15 +411,19 @@ export default function FinancialApp() {
           monthlyPrincipal, monthlyInterest, installmentNumber: 0,
           startDate: app.date, status: "active", createdAt: serverTimestamp(), createdBy: user?.uid || null
         });
-        transaction.set(cashRef, {
-          type: "expense", category: "Pencairan pinjaman " + app.source, amount: principal,
-          date: app.date, periodId, relatedType: "loan", relatedId: loanRef.id,
-          note: "Pencairan pinjaman " + app.memberName, createdAt: serverTimestamp(), createdBy: user?.uid || null
-        });
-        transaction.set(journalRef, journalData(periodId, app.date, "Pencairan pinjaman " + app.memberName, [
-          journalLine("1201", "Piutang Pinjaman", principal, 0),
-          journalLine("1101", "Kas/Bank", 0, principal)
-        ], user));
+        // Pinjaman dari Mandiri/BRI adalah fasilitas eksternal anggota, bukan arus kas KPN.
+        // Hanya pinjaman yang bersumber dari dana koperasi masuk ke buku kas dan jurnal koperasi.
+        if (app.source === "KOPERASI") {
+          transaction.set(cashRef, {
+            type: "expense", category: "Pencairan pinjaman koperasi", amount: principal,
+            date: app.date, periodId, relatedType: "loan", relatedId: loanRef.id,
+            note: "Pencairan pinjaman " + app.memberName, createdAt: serverTimestamp(), createdBy: user?.uid || null
+          });
+          transaction.set(journalRef, journalData(periodId, app.date, "Pencairan pinjaman " + app.memberName, [
+            journalLine("1201", "Piutang Pinjaman", principal, 0),
+            journalLine("1101", "Kas/Bank", 0, principal)
+          ], user));
+        }
         transaction.set(auditRef, auditData("APPROVE_AND_DISBURSE_LOAN", "loans", loanRef.id, user));
       });
       setMessage("Pinjaman disetujui dan pencairan dicatat. Angsuran pokok serta bunga dihitung otomatis.");
@@ -488,16 +492,20 @@ export default function FinancialApp() {
           remainingPrincipal: remaining, note: installmentForm.note.trim(),
           createdAt: serverTimestamp(), createdBy: user?.uid || null
         });
-        transaction.set(cashRef, {
-          type: "income", category: isPayoff ? "Pelunasan pinjaman" : "Penerimaan angsuran",
-          amount: total, date: installmentForm.date, periodId, relatedType: "installment",
-          relatedId: installmentRef.id, note: currentLoan.memberName + " · " + (isPayoff ? "Pelunasan" : "Angsuran ke-" + nextNumber),
-          createdAt: serverTimestamp(), createdBy: user?.uid || null
-        });
-        const lines = [journalLine("1101", "Kas/Bank", total, 0)];
-        if (principal > 0) lines.push(journalLine("1201", "Piutang Pinjaman", 0, principal));
-        if (interest > 0) lines.push(journalLine("4101", "Pendapatan Bunga Pinjaman", 0, interest));
-        transaction.set(journalRef, journalData(periodId, installmentForm.date, "Pembayaran pinjaman " + currentLoan.memberName, lines, user));
+        // Angsuran fasilitas bank dicatat sebagai riwayat pinjaman anggota,
+        // tetapi tidak dicampurkan ke kas KPN. Hanya pinjaman koperasi masuk jurnal kas.
+        if (currentLoan.source === "KOPERASI") {
+          transaction.set(cashRef, {
+            type: "income", category: isPayoff ? "Pelunasan pinjaman" : "Penerimaan angsuran",
+            amount: total, date: installmentForm.date, periodId, relatedType: "installment",
+            relatedId: installmentRef.id, note: currentLoan.memberName + " · " + (isPayoff ? "Pelunasan" : "Angsuran ke-" + nextNumber),
+            createdAt: serverTimestamp(), createdBy: user?.uid || null
+          });
+          const lines = [journalLine("1101", "Kas/Bank", total, 0)];
+          if (principal > 0) lines.push(journalLine("1201", "Piutang Pinjaman", 0, principal));
+          if (interest > 0) lines.push(journalLine("4101", "Pendapatan Bunga Pinjaman", 0, interest));
+          transaction.set(journalRef, journalData(periodId, installmentForm.date, "Pembayaran pinjaman " + currentLoan.memberName, lines, user));
+        }
         transaction.set(auditRef, auditData(isPayoff ? "EARLY_LOAN_PAYOFF" : "RECEIVE_INSTALLMENT", "installments", installmentRef.id, user));
       });
       setInstallmentForm({ loanId: "", kind: "regular", date: todayWib(), payoffInterest: "0", note: "" });
@@ -582,7 +590,7 @@ export default function FinancialApp() {
     sum + (item.type === "income" ? Number(item.amount || 0) : -Number(item.amount || 0)), 0), [cashTransactions]);
   const outstandingLoans = useMemo(() => loans.filter(item => item.status === "active")
     .reduce((sum, item) => sum + Number(item.outstandingPrincipal || 0), 0), [loans]);
-  const totalLoanInterest = useMemo(() => installments.reduce((sum, item) => sum + Number(item.interestPaid || 0), 0), [installments]);
+  const totalLoanInterest = useMemo(() => installments.filter(item => item.source === "KOPERASI").reduce((sum, item) => sum + Number(item.interestPaid || 0), 0), [installments]);
   const activeMembers = members.filter(member => member.active !== false);
   const latestPeriod = periods[0] || null;
 
