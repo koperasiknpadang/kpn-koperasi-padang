@@ -14,33 +14,56 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role in ['super_admin', 'admin'];
     }
 
-    // Pengguna hanya dapat membaca dokumen admin miliknya sendiri.
-    // Perubahan role hanya boleh dilakukan dari Firebase Console / lingkungan tepercaya.
+    function periodIsDraft(periodId) {
+      return getAfter(/databases/$(database)/documents/periods/$(periodId)).data.status == 'draft';
+    }
+
+    // Admin documents are provisioned only by the project owner through Firebase Console.
     match /admins/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;
       allow list, create, update, delete: if false;
     }
 
-    // Hanya ringkasan agregat yang boleh dibaca tanpa login.
+    // Only explicitly published aggregate summaries are public.
     match /public_summaries/{summaryId} {
       allow read: if true;
-      allow create, update, delete: if isAdmin();
+      allow create, update: if isAdmin();
+      allow delete: if false;
     }
 
     match /members/{memberId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create, update: if isAdmin();
+      allow delete: if false;
     }
 
+    // Current convenience view; history is kept in loan_snapshots.
     match /loans/{loanId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /loan_snapshots/{snapshotId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && periodIsDraft(request.resource.data.periodId);
+      allow update, delete: if false;
     }
 
     match /periods/{periodId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.status == 'draft';
+      allow update: if isAdmin()
+        && resource.data.status == 'draft'
+        && request.resource.data.status in ['draft', 'published']
+        && request.resource.data.periodId == resource.data.periodId;
+      allow delete: if false;
     }
 
     match /monthly_records/{recordId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if isAdmin() && periodIsDraft(request.resource.data.periodId);
+      allow update, delete: if false;
     }
 
     match /audit_logs/{logId} {
@@ -49,7 +72,6 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // Semua koleksi lain tertutup secara default.
     match /{document=**} {
       allow read, write: if false;
     }
