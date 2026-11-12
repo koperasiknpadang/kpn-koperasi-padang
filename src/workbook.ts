@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import XlsxPopulate from "@xlsx/xlsx-populate";
 
 export type SourceName = "KOPERASI" | "MANDIRI" | "BRI";
 
@@ -105,9 +106,29 @@ function periodFromCell(value: unknown): string | null {
   return year + "-" + String(month).padStart(2, "0");
 }
 
-export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
+export async function parseWorkbook(file: File, password = ""): Promise<WorkbookPreview> {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+  const bytes = new Uint8Array(buffer);
+  const encryptedOfficeFile = file.name.toLowerCase().endsWith(".xlsx") &&
+    bytes.length >= 8 &&
+    bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0 &&
+    bytes[4] === 0xa1 && bytes[5] === 0xb1 && bytes[6] === 0x1a && bytes[7] === 0xe1;
+
+  let workbook: XLSX.WorkBook;
+  if (encryptedOfficeFile) {
+    if (!password) throw new Error("PASSWORD_REQUIRED");
+    try {
+      // Decrypt the password-protected XLSX locally in the browser. The original
+      // file is never uploaded and the password is never persisted.
+      const decrypted = await XlsxPopulate.fromData(buffer, { password });
+      const plainBuffer = await decrypted.output({ type: "arraybuffer" });
+      workbook = XLSX.read(plainBuffer, { type: "array", cellDates: true });
+    } catch {
+      throw new Error("PASSWORD_INVALID");
+    }
+  } else {
+    workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+  }
   const sheets: Array<[string, SourceName]> = [
     ["Pot. Koperasi", "KOPERASI"],
     ["MANDIRI", "MANDIRI"],
@@ -149,12 +170,6 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
       const originalLoanAmount = numberValue(row[11]);
       const principalPaid = numberValue(row[5]);
       const explicitTermMonths = nullableNumber(row[13]);
-      // Sebagian baris tidak mengulang tenor dan bunga karena Excel memakai
-      // referensi parameter di baris pertama. Jika tenor kosong, estimasi dari
-      // pokok awal / angsuran pokok hanya digunakan sebagai data bantu.
-      const inferredTermMonths = originalLoanAmount > 0 && principalPaid > 0
-        ? Math.round(originalLoanAmount / principalPaid)
-        : null;
       const imported: ImportedRow = {
         rowNumber: index + 1,
         source,
@@ -171,7 +186,7 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
         outstandingPrincipal: numberValue(row[10]),
         originalLoanAmount,
         note: typeof row[12] === "string" ? row[12].trim() : "",
-        termMonths: explicitTermMonths ?? inferredTermMonths,
+        termMonths: explicitTermMonths,
         interestRate: nullableNumber(row[15]) ?? (originalLoanAmount > 0 ? sheetInterestRate : null),
         nextCounter: nullableNumber(row[17]),
         nextMonthInstallmentNumber: nullableNumber(row[18])
@@ -180,6 +195,9 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
 
       if (imported.originalLoanAmount > 0 && imported.installmentTotal === 0) {
         warnings.push("PERIKSA: Hasil formula angsuran nol pada " + sheetName + " baris " + (index + 1) + ".");
+      }
+      if (source !== "KOPERASI" && imported.originalLoanAmount > 0 && imported.termMonths === null) {
+        warnings.push("PERIKSA: Tenor pinjaman belum diisi pada " + sheetName + " baris " + (index + 1) + ". Tenor tidak akan ditebak dari jumlah pinjaman.");
       }
     }
   }
