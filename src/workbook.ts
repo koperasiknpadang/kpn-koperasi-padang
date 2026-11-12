@@ -5,6 +5,7 @@ export type SourceName = "KOPERASI" | "MANDIRI" | "BRI";
 
 export interface ImportedRow {
   rowNumber: number;
+  memberNo: string;
   source: SourceName;
   memberName: string;
   normalizedName: string;
@@ -191,8 +192,11 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
       const originalLoanAmount = numberValue(row[11]);
       const principalPaid = numberValue(row[5]);
       const explicitTermMonths = nullableNumber(row[13]);
+      const serialCell = sheet[XLSX.utils.encode_cell({ r: index, c: 0 })];
+      const memberNo = serialCell ? XLSX.utils.format_cell(serialCell).trim() : String(serial).trim();
       const imported: ImportedRow = {
         rowNumber: index + 1,
+        memberNo,
         source,
         memberName: name,
         normalizedName: normalizeName(name),
@@ -217,6 +221,13 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
       if (imported.originalLoanAmount > 0 && imported.installmentTotal === 0) {
         warnings.push("PERIKSA: Hasil formula angsuran nol pada " + sheetName + " baris " + (index + 1) + ".");
       }
+      if (imported.installmentTotal > 0 &&
+          Math.abs(imported.installmentTotal - imported.principalPaid - imported.interestPaid) > 1) {
+        warnings.push("PERIKSA: Total angsuran tidak sama dengan pokok + bunga pada " + sheetName + " baris " + (index + 1) + ".");
+      }
+      if (source !== "KOPERASI" && imported.outstandingPrincipal > 0 && imported.installmentNumber === null) {
+        warnings.push("PERIKSA: Nomor angsuran belum diisi pada " + sheetName + " baris " + (index + 1) + ".");
+      }
       if (source !== "KOPERASI" && imported.originalLoanAmount > 0 && imported.termMonths === null) {
         warnings.push("PERIKSA: Tenor pinjaman belum diisi pada " + sheetName + " baris " + (index + 1) + ". Tenor tidak akan ditebak dari jumlah pinjaman.");
       }
@@ -233,6 +244,16 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
   }
   if (masterNames.size !== masterRows.length) {
     warnings.push("STOP: Ada nama anggota ganda pada sheet Pot. Koperasi setelah normalisasi. Periksa agar data anggota tidak tergabung.");
+  }
+  const memberNumbers = new Set(masterRows.map(row => row.memberNo));
+  if (memberNumbers.size !== masterRows.length) {
+    warnings.push("STOP: Ada nomor anggota/urutan kolom A yang ganda pada sheet Pot. Koperasi.");
+  }
+  for (const source of ["MANDIRI", "BRI"] as const) {
+    const sourceRows = lenderRows.filter(row => row.source === source);
+    if (new Set(sourceRows.map(row => row.normalizedName)).size !== sourceRows.length) {
+      warnings.push("STOP: Ada nama anggota ganda pada sheet " + source + ". Satu anggota per bank hanya dapat dipetakan ke satu fasilitas pinjaman.");
+    }
   }
   const unknownLenderNames = [...lenderNames].filter(name => !masterNames.has(name));
   if (unknownLenderNames.length) {
