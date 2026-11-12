@@ -120,7 +120,12 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
     try {
       // Decrypt the password-protected XLSX locally in the browser. The original
       // file is never uploaded and the password is never persisted.
-      const decrypted = await XlsxPopulate.fromData(buffer, { password });
+      const browserReader = XlsxPopulate as unknown as {
+        fromData: (data: ArrayBuffer, options: { password: string }) => Promise<{
+          output: (options: { type: "arraybuffer" }) => Promise<ArrayBuffer>;
+        }>;
+      };
+      const decrypted = await browserReader.fromData(buffer, { password });
       const plainBuffer = await decrypted.output({ type: "arraybuffer" });
       workbook = XLSX.read(plainBuffer, { type: "array", cellDates: true });
     } catch {
