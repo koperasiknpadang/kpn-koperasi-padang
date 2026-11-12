@@ -309,7 +309,7 @@ export default function App() {
           periodId: preview.periodId,
           loanId,
           importedAt: serverTimestamp()
-        });;
+        });
       });
 
       const batch = writeBatch(db);
