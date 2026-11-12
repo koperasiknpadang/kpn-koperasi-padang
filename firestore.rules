@@ -34,20 +34,20 @@ service cloud.firestore {
     match /members/{memberId} {
       allow read: if isAdmin();
       allow create, update: if isAdmin();
-      allow delete: if isAdmin();
+      allow delete: if false;
     }
 
     // Current convenience view; history is kept in loan_snapshots.
     match /loans/{loanId} {
       allow read: if isAdmin();
-      allow create, update, delete: if isAdmin();
+      allow create, update: if isAdmin();
+      allow delete: if false;
     }
 
     match /loan_snapshots/{snapshotId} {
       allow read: if isAdmin();
       allow create: if isAdmin() && periodIsDraft(request.resource.data.periodId);
-      allow update: if false;
-      allow delete: if isAdmin() && periodIsDraft(resource.data.periodId);
+      allow update, delete: if false;
     }
 
     match /periods/{periodId} {
@@ -57,14 +57,13 @@ service cloud.firestore {
         && resource.data.status == 'draft'
         && request.resource.data.status in ['draft', 'published']
         && request.resource.data.periodId == resource.data.periodId;
-      allow delete: if isAdmin() && resource.data.status == 'draft';
+      allow delete: if false;
     }
 
     match /monthly_records/{recordId} {
       allow read: if isAdmin();
       allow create: if isAdmin() && periodIsDraft(request.resource.data.periodId);
-      allow update: if false;
-      allow delete: if isAdmin() && periodIsDraft(resource.data.periodId);
+      allow update, delete: if false;
     }
 
     match /audit_logs/{logId} {
