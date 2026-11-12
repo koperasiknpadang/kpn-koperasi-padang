@@ -90,6 +90,9 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [preview, setPreview] = useState<WorkbookPreview | null>(null);
   const [fileName, setFileName] = useState("");
+  const [selectedWorkbookFile, setSelectedWorkbookFile] = useState<File | null>(null);
+  const [workbookPassword, setWorkbookPassword] = useState("");
+  const [passwordRequired, setPasswordRequired] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const [currentTime, setCurrentTime] = useState(() => new Date());
@@ -199,17 +202,32 @@ export default function App() {
     setMessage("");
   }
 
-  async function handleWorkbook(file?: File) {
+  async function handleWorkbook(file?: File, filePassword = "") {
     if (!file) return;
     setError("");
     setMessage("");
     setFileName(file.name);
+    setSelectedWorkbookFile(file);
     try {
-      const result = await parseWorkbook(file);
+      const result = await parseWorkbook(file, filePassword);
       setPreview(result);
+      setPasswordRequired(false);
+      setWorkbookPassword("");
+      setSelectedWorkbookFile(null);
     } catch (e: any) {
       setPreview(null);
-      setError(e?.message || "File Excel tidak dapat dibaca.");
+      if (e?.message === "PASSWORD_REQUIRED") {
+        setPasswordRequired(true);
+        setError("File Excel ini dilindungi password. Masukkan password untuk membacanya.");
+      } else if (e?.message === "PASSWORD_INVALID") {
+        setPasswordRequired(true);
+        setWorkbookPassword("");
+        setError("Password salah atau jenis enkripsi file belum didukung. Periksa password dan coba kembali.");
+      } else {
+        setPasswordRequired(false);
+        setWorkbookPassword("");
+        setError(e?.message || "File Excel tidak dapat dibaca.");
+      }
     }
   }
 
@@ -721,8 +739,21 @@ export default function App() {
                     <FileSpreadsheet size={28} className="text-sage-600" />
                     <span className="mt-3 text-sm font-semibold text-sage-800">Pilih file Excel (.xlsx)</span>
                     <span className="mt-1 text-xs text-slate-500">{fileName || "Belum ada file dipilih"}</span>
-                    <input type="file" accept=".xlsx,.xls" className="hidden" onChange={e => void handleWorkbook(e.target.files?.[0])} />
+                    <input type="file" accept=".xlsx,.xls" className="hidden" onChange={e => {
+                      const file = e.target.files?.[0];
+                      setWorkbookPassword("");
+                      setPasswordRequired(false);
+                      setSelectedWorkbookFile(file || null);
+                      void handleWorkbook(file);
+                    }} />
                   </label>
+                  {passwordRequired && selectedWorkbookFile ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+                    <label className="block text-xs font-semibold text-slate-700">Password file Excel
+                      <input type="password" autoComplete="off" value={workbookPassword} onChange={e => setWorkbookPassword(e.target.value)} placeholder="Masukkan password untuk membuka file" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-sage-500" />
+                    </label>
+                    <button type="button" disabled={!workbookPassword || importBusy} onClick={() => void handleWorkbook(selectedWorkbookFile, workbookPassword)} className="mt-3 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Baca file Excel</button>
+                    <p className="mt-2 text-[11px] text-slate-500">Password hanya dipakai sementara di perangkat ini dan tidak disimpan.</p>
+                  </div> : null}
                   <p className="mt-3 text-xs leading-relaxed text-slate-500">Sebelum mengunggah, buka file di Excel, tekan Ctrl+Alt+F9 untuk menghitung ulang formula, lalu simpan. Jangan mengunggah workbook ini ke GitHub.</p>
                 </Card>
                 {preview ? <Card>
