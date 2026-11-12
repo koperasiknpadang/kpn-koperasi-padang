@@ -735,8 +735,8 @@ export default function App() {
               <div className="space-y-4">
                 <Card>
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div><h2 className="font-semibold">Data awal koperasi</h2><p className="mt-1 text-xs text-slate-500">Reset hanya untuk tahap persiapan sebelum ada periode yang dipublikasikan.</p></div>
-                    <button onClick={() => void resetInitialData()} disabled={resetBusy || importBusy} className="inline-flex items-center gap-2 rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"><RefreshCw size={14} className={resetBusy ? "animate-spin" : ""} /> {resetBusy ? "Mereset..." : "Reset data awal"}</button>
+                    <div><h2 className="font-semibold">Data awal koperasi</h2><p className="mt-1 text-xs text-slate-500">Impor hanya akan menambahkan periode baru dan tidak menimpa periode yang sudah tersimpan.</p></div>
+                    <span className="rounded-xl bg-sage-50 px-3 py-2 text-xs font-medium text-sage-700">Data historis dilindungi</span>
                   </div>
                   <div className="flex items-start gap-3"><div className="rounded-xl bg-sage-50 p-3 text-sage-700"><UploadCloud size={22} /></div><div><h2 className="font-semibold">Impor workbook bulanan</h2><p className="mt-1 text-sm text-slate-500">Pilih file Excel dengan sheet Pot. Koperasi, MANDIRI, dan BRI. Data akan diperiksa terlebih dahulu sebelum disimpan.</p></div></div>
                   <label className="mt-5 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-sage-200 bg-sage-50/50 px-5 py-9 text-center hover:bg-sage-50">
