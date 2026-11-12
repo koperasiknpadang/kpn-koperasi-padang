@@ -226,10 +226,17 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
         warnings.push("PERIKSA: Total angsuran tidak sama dengan pokok + bunga pada " + sheetName + " baris " + (index + 1) + ".");
       }
       if (source !== "KOPERASI" && imported.outstandingPrincipal > 0 && imported.installmentNumber === null) {
-        warnings.push("PERIKSA: Nomor angsuran belum diisi pada " + sheetName + " baris " + (index + 1) + ".");
+        warnings.push("STOP: Nomor angsuran belum diisi untuk pinjaman aktif pada " + sheetName + " baris " + (index + 1) + ". Sistem tidak akan menebak nomor angsuran berikutnya.");
       }
       if (source !== "KOPERASI" && imported.originalLoanAmount > 0 && imported.termMonths === null) {
         warnings.push("PERIKSA: Tenor pinjaman belum diisi pada " + sheetName + " baris " + (index + 1) + ". Tenor tidak akan ditebak dari jumlah pinjaman.");
+      }
+      if (source !== "KOPERASI" && imported.outstandingPrincipal > 0 &&
+          imported.principalPaid <= 0 && imported.termMonths === null) {
+        warnings.push("STOP: Pokok angsuran bulanan dan tenor sama-sama kosong pada " + sheetName + " baris " + (index + 1) + ". Lengkapi salah satunya agar angsuran berikutnya dapat dihitung.");
+      }
+      if (source !== "KOPERASI" && imported.outstandingPrincipal > 0 && imported.originalLoanAmount <= 0) {
+        warnings.push("STOP: Sisa pinjaman ada tetapi pokok awal kosong pada " + sheetName + " baris " + (index + 1) + ".");
       }
     }
   }
@@ -258,6 +265,17 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
   const unknownLenderNames = [...lenderNames].filter(name => !masterNames.has(name));
   if (unknownLenderNames.length) {
     warnings.push("STOP: Ada nama pada sheet MANDIRI/BRI yang tidak ditemukan di sheet Pot. Koperasi. Cocokkan nama anggota sebelum impor.");
+  }
+
+  // Periksa apakah total potongan anggota sejalan dengan simpanan dan angsuran bank.
+  for (const master of masterRows) {
+    const bankTotal = lenderRows.filter(row => row.normalizedName === master.normalizedName)
+      .reduce((sum, row) => sum + Number(row.installmentTotal || 0), 0);
+    const expectedDeduction = master.savingsPrincipal + master.savingsMandatory +
+      master.savingsVoluntary + bankTotal;
+    if (Math.abs(master.totalDeduction - expectedDeduction) > 1) {
+      warnings.push("PERIKSA: Total potongan " + master.memberName + " pada Pot. Koperasi tidak sama dengan simpanan + angsuran bank. Periksa komponen potongan lain atau data sumber.");
+    }
   }
 
   // Hanya komponen pinjaman yang direkonsiliasi terhadap gabungan dua bank.
