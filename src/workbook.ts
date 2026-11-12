@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { unzipSync, zipSync } from "fflate";
 import * as XlsxPopulateModule from "@xlsx/xlsx-populate";
 
 export type SourceName = "KOPERASI" | "MANDIRI" | "BRI";
@@ -150,7 +151,18 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
       throw new Error("PASSWORD_INVALID");
     }
   } else {
-    workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+    // Normalize the ZIP container before handing it to SheetJS. Some Excel files
+    // produced by desktop/mobile office apps contain ZIP metadata that causes
+    // browser readers to report "Bad compressed size" even though the XML files
+    // are intact. Repacking preserves every workbook entry and its cell values.
+    try {
+      const entries = unzipSync(bytes);
+      const normalizedArchive = zipSync(entries, { level: 6 });
+      workbook = XLSX.read(normalizedArchive, { type: "array", cellDates: true });
+    } catch (normalizationError) {
+      // Keep a compatibility fallback for unusual but valid OOXML containers.
+      workbook = XLSX.read(bytes, { type: "array", cellDates: true });
+    }
   }
   const sheets: Array<[string, SourceName]> = [
     ["Pot. Koperasi", "KOPERASI"],
