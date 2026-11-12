@@ -203,6 +203,10 @@ export default function App() {
 
   async function saveImport() {
     if (!preview || !isAdmin || preview.rows.length === 0) return;
+    if (preview.warnings.some(warning => warning.startsWith("STOP:"))) {
+      setError("Impor dibatalkan karena rekonsiliasi workbook belum sesuai. Perbaiki file terlebih dahulu.");
+      return;
+    }
     setImportBusy(true);
     setError("");
     setMessage("");
@@ -572,7 +576,7 @@ export default function App() {
                   <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-semibold">Pratinjau impor</h2><p className="mt-1 text-sm text-slate-500">{preview.periodLabel} · {number(preview.rows.length)} baris data terbaca</p></div><span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">Status: draft</span></div>
                   {preview.warnings.length ? <div className="mt-4 space-y-2">{preview.warnings.slice(0, 8).map((warning, index) => <p key={index} className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"><AlertCircle size={14} className="shrink-0" />{warning}</p>)}</div> : <p className="mt-4 flex items-center gap-2 text-xs text-emerald-700"><CheckCircle2 size={15} /> Struktur tiga sheet berhasil dibaca.</p>}
                   <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[700px] text-left text-xs"><thead><tr className="border-b border-slate-100 text-slate-400"><th className="py-2">Nama anggota</th><th className="py-2">Sumber</th><th className="py-2 text-right">Simpanan wajib</th><th className="py-2 text-right">Angsuran pokok</th><th className="py-2 text-right">Bunga</th><th className="py-2 text-right">Sisa pinjaman</th></tr></thead><tbody>{preview.rows.slice(0, 8).map((row, index) => <tr key={index} className="border-b border-slate-50"><td className="py-2 font-medium">{row.memberName}</td><td className="py-2">{sourceLabel(row.source)}</td><td className="py-2 text-right">{money(row.savingsMandatory)}</td><td className="py-2 text-right">{money(row.principalPaid)}</td><td className="py-2 text-right">{money(row.interestPaid)}</td><td className="py-2 text-right">{money(row.outstandingPrincipal)}</td></tr>)}</tbody></table></div>
-                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><p className="max-w-xl text-xs text-slate-500">Simpan sebagai draft terlebih dahulu. Pastikan tidak ada periode dengan ID yang sama.</p><button disabled={importBusy || preview.rows.length === 0} onClick={() => void saveImport()} className="inline-flex items-center gap-2 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sage-600 disabled:cursor-not-allowed disabled:opacity-50">{importBusy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />} Simpan sebagai draft</button></div>
+                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><p className="max-w-xl text-xs text-slate-500">Simpan sebagai draft terlebih dahulu. Pastikan tidak ada periode dengan ID yang sama.</p><button disabled={importBusy || preview.rows.length === 0 || preview.warnings.some(warning => warning.startsWith("STOP:"))} onClick={() => void saveImport()} className="inline-flex items-center gap-2 rounded-xl bg-sage-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sage-600 disabled:cursor-not-allowed disabled:opacity-50">{importBusy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />} Simpan sebagai draft</button></div>
                 </Card> : null}
               </div>
             ) : null}
