@@ -476,8 +476,16 @@ export default function FinancialApp() {
         throw new Error("Periode " + preview.periodLabel + " sudah tercatat. Impor tidak dijalankan agar data tidak ganda atau tertimpa.");
       }
 
-      const memberById = new Map(members.map(item => [item.id, item]));
-      const memberNameIndex = new Map(members.map(item => [normalizeMemberName(String(item.name || "")), item]));
+      const memberByName = new Map<string, Row>();
+      for (const item of members) {
+        const normalized = normalizeMemberName(String(item.name || ""));
+        if (!normalized) continue;
+        if (memberByName.has(normalized)) {
+          throw new Error("Sudah ada lebih dari satu data anggota dengan nama " + item.name + " di Firebase. Rapikan data anggota sebelum impor.");
+        }
+        memberByName.set(normalized, item);
+      }
+      const resolvedMemberIds = new Map<string, string>();
       const batch = writeBatch(db);
       const periodDate = preview.periodId + "-01";
       let operationCount = 1; // period
@@ -498,16 +506,13 @@ export default function FinancialApp() {
       });
 
       for (const row of masterRows) {
-        const memberId = memberIdFromNumber(row.memberNo);
-        if (memberId === "anggota_") throw new Error("Nomor anggota/urutan Excel kosong pada baris " + row.rowNumber + ".");
-        const existing = memberById.get(memberId);
-        const sameName = memberNameIndex.get(row.normalizedName);
-        if (existing && normalizeMemberName(String(existing.name || "")) !== row.normalizedName) {
-          throw new Error("Nomor anggota " + row.memberNo + " sudah dipakai oleh " + existing.name + ", sedangkan workbook berisi " + row.memberName + ".");
-        }
-        if (sameName && sameName.id !== memberId) {
-          throw new Error("Nama " + row.memberName + " sudah terdaftar dengan nomor anggota berbeda. Cocokkan data anggota terlebih dahulu.");
-        }
+        if (!row.normalizedName) throw new Error("Nama anggota kosong atau tidak valid pada baris " + row.rowNumber + ".");
+        // Kolom A workbook adalah nomor urut baris, bukan identitas permanen.
+        // Cocokkan anggota berdasarkan nama yang dinormalisasi agar perubahan urutan Excel
+        // tidak membuat anggota baru atau mengaitkan pinjaman ke orang yang salah.
+        const existing = memberByName.get(row.normalizedName);
+        const memberId = existing?.id || stableId("member", row.normalizedName);
+        resolvedMemberIds.set(row.normalizedName, memberId);
         const balances = { ...zeroBalances, ...(existing?.savingsBalances || {}) };
         const savingAmounts: Array<[SavingType, number]> = [
           ["principal", Number(row.savingsPrincipal || 0)],
@@ -524,7 +529,7 @@ export default function FinancialApp() {
             const savingId = stableId("saving", preview.periodId + "_" + memberId + "_" + type);
             batch.set(doc(db, "savings_transactions", savingId), {
               memberId, memberName: row.memberName, type, direction: "deposit", amount,
-              date: periodDate, periodId, importId,
+              date: periodDate, periodId: preview.periodId, importId,
               note: "Potongan simpanan bulanan dari workbook " + fileName,
               createdAt: serverTimestamp(), createdBy: user?.uid || null
             });
@@ -532,7 +537,7 @@ export default function FinancialApp() {
           }
         }
         batch.set(doc(db, "members", memberId), {
-          memberNo: row.memberNo, name: row.memberName, normalizedName: row.normalizedName,
+          memberNo: existing?.memberNo || row.memberNo, sourceSerial: row.memberNo, name: row.memberName, normalizedName: row.normalizedName,
           phone: existing?.phone || "", joinDate: existing?.joinDate || periodDate,
           active: existing?.active !== false, savingsBalances: balances,
           createdAt: existing?.createdAt || serverTimestamp(), updatedAt: serverTimestamp(),
@@ -542,18 +547,13 @@ export default function FinancialApp() {
       }
 
       for (const row of bankRows) {
-        const masterMember = masterRows.find(item => item.normalizedName === row.normalizedName);
-        const memberId = memberIdFromNumber(masterMember?.memberNo || row.memberNo);
-        const member = memberById.get(memberId) || members.find(item =>
-          normalizeMemberName(String(item.name || "")) === row.normalizedName
-        );
-        if (!masterMember && !member) {
+        const resolvedMemberId = resolvedMemberIds.get(row.normalizedName);
+        if (!resolvedMemberId) {
           throw new Error("Anggota " + row.memberName + " pada sheet " + row.source + " tidak ditemukan di Pot. Koperasi.");
         }
         const hasLoan = row.originalLoanAmount > 0 || row.outstandingPrincipal > 0 ||
           row.principalPaid > 0 || row.interestPaid > 0;
         if (!hasLoan) continue;
-        const resolvedMemberId = member?.id || memberId;
         const loanId = stableId("loan_" + row.source.toLowerCase(), row.normalizedName);
         const existingLoan = loans.find(item => item.id === loanId);
         const monthlyPrincipal = row.principalPaid > 0
@@ -620,7 +620,7 @@ export default function FinancialApp() {
         const cashId = stableId("cash", "workbook_savings_" + preview.periodId);
         batch.set(doc(db, "cash_transactions", cashId), {
           type: "income", category: "Setoran simpanan hasil potongan gaji",
-          amount: totalSavings, date: periodDate, periodId, importId,
+          amount: totalSavings, date: periodDate, periodId: preview.periodId, importId,
           relatedType: "workbook_import", relatedId: importId,
           note: "Akumulasi simpanan anggota dari workbook " + fileName,
           createdAt: serverTimestamp(), createdBy: user?.uid || null
