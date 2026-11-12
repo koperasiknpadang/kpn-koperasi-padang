@@ -11,6 +11,8 @@ permissions:
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KOPERASI_KN_PADANG }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,9 +29,14 @@ jobs:
         run: npm run build
 
       - name: Deploy to Firebase Hosting
+        if: ${{ env.FIREBASE_SERVICE_ACCOUNT != '' }}
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KOPERASI_KN_PADANG }}
+          firebaseServiceAccount: ${{ env.FIREBASE_SERVICE_ACCOUNT }}
           channelId: live
           projectId: koperasi-kn-padang
+
+      - name: Skip deployment until Firebase secret is configured
+        if: ${{ env.FIREBASE_SERVICE_ACCOUNT == '' }}
+        run: echo "Build passed. Add FIREBASE_SERVICE_ACCOUNT_KOPERASI_KN_PADANG in GitHub Actions secrets to enable deployment."
