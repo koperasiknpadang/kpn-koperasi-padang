@@ -133,6 +133,9 @@ export async function parseWorkbook(file: File): Promise<WorkbookPreview> {
   if (masterRows.length === 0) {
     warnings.push("STOP: Sheet Pot. Koperasi tidak berisi baris anggota.");
   }
+  if (masterNames.size !== masterRows.length) {
+    warnings.push("STOP: Ada nama anggota ganda pada sheet Pot. Koperasi setelah normalisasi. Periksa agar data anggota tidak tergabung.");
+  }
   if (masterNames.size !== lenderNames.size ||
       [...masterNames].some(name => !lenderNames.has(name)) ||
       [...lenderNames].some(name => !masterNames.has(name))) {
