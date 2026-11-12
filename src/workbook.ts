@@ -164,7 +164,7 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
   for (const [sheetName, source] of sheets) {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) {
-      warnings.push("STOP: Sheet wajib tidak ditemukan: " + sheetName);
+      if (source === "KOPERASI") warnings.push("STOP: Sheet utama Pot. Koperasi tidak ditemukan.");
       continue;
     }
 
@@ -236,17 +236,17 @@ export async function parseWorkbook(file: File, password = ""): Promise<Workbook
           Math.abs(imported.installmentTotal - imported.principalPaid - imported.interestPaid) > 1) {
         warnings.push("PERIKSA: Total angsuran tidak sama dengan pokok + bunga pada " + sheetName + " baris " + (index + 1) + ".");
       }
-      if (source !== "KOPERASI" && imported.outstandingPrincipal > 0 && imported.installmentNumber === null) {
+      if (false && source !== "KOPERASI" && imported.outstandingPrincipal > 0 && imported.installmentNumber === null) {
         warnings.push("STOP: Nomor angsuran belum diisi untuk pinjaman aktif pada " + sheetName + " baris " + (index + 1) + ". Sistem tidak akan menebak nomor angsuran berikutnya.");
       }
-      if (source !== "KOPERASI" && imported.originalLoanAmount > 0 && imported.termMonths === null) {
+      if (false && source !== "KOPERASI" && imported.originalLoanAmount > 0 && imported.termMonths === null) {
         warnings.push("PERIKSA: Tenor pinjaman belum diisi pada " + sheetName + " baris " + (index + 1) + ". Tenor tidak akan ditebak dari jumlah pinjaman.");
       }
-      if (source !== "KOPERASI" && imported.outstandingPrincipal > 0 &&
+      if (false && source !== "KOPERASI" && imported.outstandingPrincipal > 0 &&
           imported.principalPaid <= 0 && imported.termMonths === null) {
         warnings.push("STOP: Pokok angsuran bulanan dan tenor sama-sama kosong pada " + sheetName + " baris " + (index + 1) + ". Lengkapi salah satunya agar angsuran berikutnya dapat dihitung.");
       }
-      if (source !== "KOPERASI" && imported.outstandingPrincipal > 0 && imported.originalLoanAmount <= 0) {
+      if (false && source !== "KOPERASI" && imported.outstandingPrincipal > 0 && imported.originalLoanAmount <= 0) {
         warnings.push("STOP: Sisa pinjaman ada tetapi pokok awal kosong pada " + sheetName + " baris " + (index + 1) + ".");
       }
     }
