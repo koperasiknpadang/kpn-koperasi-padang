@@ -103,24 +103,28 @@ export default function App() {
   async function refreshAdminData() {
     setDataBusy(true);
     try {
-      const [memberSnap, loanSnap, periodSnap] = await Promise.all([
+      const [memberSnap, periodSnap] = await Promise.all([
         getDocs(collection(db, "members")),
-        getDocs(collection(db, "loans")),
         getDocs(collection(db, "periods"))
       ]);
       const memberRows: AnyRecord[] = memberSnap.docs.map(item => ({ id: item.id, ...item.data() }));
-      const loanRows: AnyRecord[] = loanSnap.docs.map(item => ({ id: item.id, ...item.data() }));
       const periodRows: AnyRecord[] = periodSnap.docs.map(item => ({ id: item.id, ...item.data() }))
         .sort((a, b) => String(a.id).localeCompare(String(b.id))).reverse();
       setMembers(memberRows.sort((a, b) => String(a.name).localeCompare(String(b.name), "id")));
-      setLoans(loanRows.sort((a, b) => String(a.memberName).localeCompare(String(b.memberName), "id")));
       setPeriods(periodRows);
+
       if (periodRows.length > 0) {
         const latestId = String(periodRows[0].id);
-        const recordSnap = await getDocs(query(collection(db, "monthly_records"), where("periodId", "==", latestId)));
+        const [recordSnap, loanSnap] = await Promise.all([
+          getDocs(query(collection(db, "monthly_records"), where("periodId", "==", latestId))),
+          getDocs(query(collection(db, "loan_snapshots"), where("periodId", "==", latestId)))
+        ]);
         setRecords(recordSnap.docs.map(item => ({ id: item.id, ...item.data() })));
+        const loanRows: AnyRecord[] = loanSnap.docs.map(item => ({ id: item.id, ...item.data() }));
+        setLoans(loanRows.sort((a, b) => String(a.memberName).localeCompare(String(b.memberName), "id")));
       } else {
         setRecords([]);
+        setLoans([]);
       }
     } catch (e: any) {
       setError(e?.message || "Gagal membaca data Firestore. Periksa Security Rules.");
@@ -219,6 +223,7 @@ export default function App() {
 
       const memberDocs = new Map<string, AnyRecord>();
       const loanDocs = new Map<string, AnyRecord>();
+      const loanSnapshotDocs = new Map<string, AnyRecord>();
       const recordDocs = new Map<string, AnyRecord>();
 
       const masterRows = preview.rows.filter(row => row.source === "KOPERASI");
@@ -280,7 +285,7 @@ export default function App() {
         if (!hasLoan) return;
 
         const loanId = stableId("loan_" + row.source.toLowerCase(), row.normalizedName);
-        loanDocs.set(loanId, {
+        const loanData = {
           memberId,
           memberName: row.memberName,
           source: row.source,
@@ -296,7 +301,15 @@ export default function App() {
           lastPeriodId: preview.periodId,
           status: row.outstandingPrincipal > 0 ? "active" : "paid",
           updatedAt: serverTimestamp()
-        });
+        };
+        loanDocs.set(loanId, loanData);
+        const snapshotId = stableId("loan_snapshot", preview.periodId + "_" + row.source + "_" + row.normalizedName);
+        loanSnapshotDocs.set(snapshotId, {
+          ...loanData,
+          periodId: preview.periodId,
+          loanId,
+          importedAt: serverTimestamp()
+        });;
       });
 
       const batch = writeBatch(db);
@@ -314,6 +327,7 @@ export default function App() {
       });
       memberDocs.forEach((data, id) => batch.set(doc(db, "members", id), data, { merge: true }));
       loanDocs.forEach((data, id) => batch.set(doc(db, "loans", id), data, { merge: true }));
+      loanSnapshotDocs.forEach((data, id) => batch.set(doc(db, "loan_snapshots", id), data));
       recordDocs.forEach((data, id) => batch.set(doc(db, "monthly_records", id), data));
       const auditRef = doc(collection(db, "audit_logs"));
       batch.set(auditRef, {
@@ -373,7 +387,8 @@ export default function App() {
     });
 
     try {
-      await setDoc(doc(db, "public_summaries", "current"), {
+      const publishBatch = writeBatch(db);
+      publishBatch.set(doc(db, "public_summaries", "current"), {
         periodId: latestPeriod.id,
         periodLabel: latestPeriod.periodLabel,
         memberCount: memberIds.size,
@@ -385,11 +400,12 @@ export default function App() {
         lenderBreakdown: Object.entries(bySource).map(([source, outstanding]) => ({ source, outstanding })),
         updatedAt: serverTimestamp()
       });
-      await updateDoc(doc(db, "periods", latestPeriod.id), {
+      publishBatch.update(doc(db, "periods", latestPeriod.id), {
         status: "published",
         publishedAt: serverTimestamp(),
         publishedBy: user?.uid || null
       });
+      await publishBatch.commit();
       await loadPublicSummary();
       await refreshAdminData();
       setMessage("Ringkasan agregat periode " + latestPeriod.periodLabel + " berhasil dipublikasikan.");
