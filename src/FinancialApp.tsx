@@ -469,10 +469,10 @@ export default function FinancialApp() {
       return;
     }
     const masterRows = preview.rows.filter(row => row.source === "KOPERASI");
-    const bankRows = preview.rows.filter(row => row.source === "MANDIRI" || row.source === "BRI");
+    const bankRows = masterRows.filter(row => row.bankSource === "MANDIRI" || row.bankSource === "BRI");
     if (!masterRows.length) return setError("Sheet Pot. Koperasi tidak menghasilkan anggota.");
     const importFingerprint = preview.periodId + "|" + preview.rows.map(row =>
-      [row.source, row.memberNo, row.normalizedName, row.savingsPrincipal, row.savingsMandatory,
+      [row.source, row.bankSource, row.memberNo, row.normalizedName, row.savingsPrincipal, row.savingsMandatory,
         row.savingsVoluntary, row.principalPaid, row.interestPaid, row.outstandingPrincipal,
         row.originalLoanAmount, row.installmentNumber].join(":")
     ).join("|");
@@ -506,7 +506,7 @@ export default function FinancialApp() {
       batch.set(periodRef, {
         periodId: preview.periodId, periodLabel: preview.periodLabel, status: "open",
         importedRows: masterRows.length, sourceRows: preview.rows.length,
-        memberCount: masterRows.length, loanCount: bankRows.filter(row =>
+        memberCount: masterRows.length, loanCount: masterRows.filter(row =>
           row.originalLoanAmount > 0 || row.outstandingPrincipal > 0 || row.principalPaid > 0 || row.interestPaid > 0
         ).length,
         sourceSheets: ["Pot. Koperasi", "MANDIRI", "BRI"],
@@ -559,7 +559,7 @@ export default function FinancialApp() {
         operationCount += 1;
       }
 
-      for (const row of bankRows) {
+      for (const row of masterRows) {
         const resolvedMemberId = resolvedMemberIds.get(row.normalizedName);
         if (!resolvedMemberId) {
           throw new Error("Anggota " + row.memberName + " pada sheet " + row.source + " tidak ditemukan di Pot. Koperasi.");
@@ -567,7 +567,8 @@ export default function FinancialApp() {
         const hasLoan = row.originalLoanAmount > 0 || row.outstandingPrincipal > 0 ||
           row.principalPaid > 0 || row.interestPaid > 0;
         if (!hasLoan) continue;
-        const loanId = stableId("loan_" + row.source.toLowerCase(), row.normalizedName);
+        const loanSource = row.bankSource || "KOPERASI";
+        const loanId = stableId("loan_" + loanSource.toLowerCase(), row.normalizedName);
         const existingLoan = loans.find(item => item.id === loanId);
         const monthlyPrincipal = row.principalPaid > 0
           ? row.principalPaid
@@ -577,7 +578,7 @@ export default function FinancialApp() {
           : (row.interestRate !== null && row.outstandingPrincipal > 0 ? Math.round(row.originalLoanAmount * row.interestRate) : 0);
         batch.set(doc(db, "loans", loanId), {
           applicationId: null, memberId: resolvedMemberId, memberName: row.memberName,
-          source: row.source, principal: row.originalLoanAmount,
+          source: loanSource, principal: row.originalLoanAmount,
           outstandingPrincipal: row.outstandingPrincipal, termMonths: row.termMonths,
           interestRate: row.interestRate, monthlyPrincipal, monthlyInterest,
           installmentNumber: row.installmentNumber ?? 0,
@@ -592,7 +593,7 @@ export default function FinancialApp() {
         if (row.installmentTotal > 0) {
           const installmentId = loanId + "__" + preview.periodId;
           batch.set(doc(db, "installments", installmentId), {
-            loanId, memberId: resolvedMemberId, memberName: row.memberName, source: row.source,
+            loanId, memberId: resolvedMemberId, memberName: row.memberName, source: loanSource,
             kind: "regular", periodId: preview.periodId, date: periodDate,
             installmentNumber: row.installmentNumber ?? 0,
             principalPaid: row.principalPaid, interestPaid: row.interestPaid,
@@ -624,7 +625,7 @@ export default function FinancialApp() {
           termMonths: row.termMonths, interestRate: row.interestRate, note: row.note
         })),
         bankRows: bankRows.map(row => ({
-          memberNo: row.memberNo, memberName: row.memberName, source: row.source,
+          memberNo: row.memberNo, memberName: row.memberName, source: row.bankSource,
           principalPaid: row.principalPaid, interestPaid: row.interestPaid,
           installmentTotal: row.installmentTotal, installmentNumber: row.installmentNumber,
           outstandingPrincipal: row.outstandingPrincipal, originalLoanAmount: row.originalLoanAmount,
@@ -666,7 +667,7 @@ export default function FinancialApp() {
       await batch.commit();
       setMessage("Impor " + preview.periodLabel + " berhasil. " + masterRows.length + " anggota, " +
         totalLoanRows + " pinjaman bank, " + importedInstallments + " angsuran, dan " +
-        money(totalSavings) + " simpanan telah dicatat, termasuk simpanan wajib " + money(masterRows.reduce((sum, row) => sum + Number(row.savingsMandatory || 0), 0)) + ". Pinjaman MANDIRI/BRI tidak dimasukkan ke kas KPN.");
+        money(totalSavings) + " simpanan telah dicatat, termasuk simpanan wajib " + money(masterRows.reduce((sum, row) => sum + Number(row.savingsMandatory || 0), 0)) + ". Rincian potongan bank hanya digunakan sebagai klasifikasi dan tidak menggantikan data pada Pot. Koperasi.");
       setPreview(null); setFileName(""); setSelectedWorkbookFile(null); setWorkbookPassword("");
       await refreshAll();
       setTab("dashboard");
@@ -1403,7 +1404,7 @@ export default function FinancialApp() {
           <Card>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div><h2 className="font-semibold">Impor workbook bulanan</h2>
-                <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-500">Baca file Excel dengan tiga sheet wajib: Pot. Koperasi, MANDIRI, dan BRI. Data diperiksa dan ditampilkan lebih dahulu. File diproses di browser; file Excel dan password tidak diunggah ke Firebase.</p>
+                <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-500">Data utama dibaca dari sheet Pot. Koperasi. Sheet MANDIRI dan BRI hanya digunakan untuk mengelompokkan potongan menurut bank. Data diperiksa dan ditampilkan lebih dahulu. File diproses di browser; file Excel dan password tidak diunggah ke Firebase.</p>
               </div><FileSpreadsheet size={22} className="text-emerald-700"/>
             </div>
             <label className="mt-5 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-emerald-200 bg-emerald-50/40 px-5 py-8 text-center hover:bg-emerald-50">
@@ -1425,7 +1426,7 @@ export default function FinancialApp() {
               <p className="mt-2 text-[11px] text-slate-500">Password hanya digunakan sementara di perangkat ini dan tidak disimpan.</p>
             </div> : null}
             <div className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
-              <strong>Aturan impor:</strong> Pot. Koperasi menjadi sumber master anggota dan simpanan bulanan. MANDIRI/BRI menjadi rincian fasilitas pinjaman eksternal. Angsuran MANDIRI/BRI tidak dicampurkan ke kas koperasi. Periode yang sudah ada akan ditolak agar tidak terjadi impor ganda.
+              <strong>Aturan impor:</strong> Pot. Koperasi menjadi satu-satunya sumber data anggota, simpanan, pinjaman, angsuran, bunga, dan saldo. Sheet MANDIRI/BRI hanya menjadi penanda kelompok potongan bank; nilai keuangan dari kedua sheet tersebut tidak digunakan. Periode yang sudah ada akan ditolak agar tidak terjadi impor ganda.
             </div>
           </Card>
           {preview ? <Card>
@@ -1436,10 +1437,10 @@ export default function FinancialApp() {
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Anggota utama</p><p className="mt-1 text-lg font-bold">{fmtNumber(preview.rows.filter(row=>row.source==="KOPERASI").length)}</p></div>
-              <div className="rounded-xl bg-sky-50 p-3"><p className="text-xs text-sky-800">Fasilitas bank</p><p className="mt-1 text-lg font-bold">{fmtNumber(preview.rows.filter(row=>row.source!=="KOPERASI"&&(row.originalLoanAmount>0||row.outstandingPrincipal>0)).length)}</p></div>
+              <div className="rounded-xl bg-sky-50 p-3"><p className="text-xs text-sky-800">Potongan melalui bank</p><p className="mt-1 text-lg font-bold">{fmtNumber(preview.rows.filter(row=>row.bankSource!==null).length)}</p></div>
               <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Simpanan wajib seluruh anggota</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.source==="KOPERASI").reduce((sum,row)=>sum+row.savingsMandatory,0))}</p></div>
               <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-800">Total seluruh simpanan</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.source==="KOPERASI").reduce((sum,row)=>sum+row.savingsPrincipal+row.savingsMandatory+row.savingsVoluntary,0))}</p></div>
-              <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-600">Total angsuran bank</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.source!=="KOPERASI").reduce((sum,row)=>sum+row.installmentTotal,0))}</p></div>
+              <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-600">Total angsuran bank</p><p className="mt-1 text-lg font-bold">{money(preview.rows.filter(row=>row.bankSource!==null).reduce((sum,row)=>sum+row.installmentTotal,0))}</p></div>
             </div>
             {preview.warnings.length ? <div className="mt-4 space-y-2">
               {preview.warnings.map((warning,index)=><p key={index} className={"flex gap-2 rounded-lg px-3 py-2 text-xs leading-relaxed "+(warning.startsWith("STOP:")?"bg-rose-50 text-rose-800":"bg-amber-50 text-amber-900")}>
